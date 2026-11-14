@@ -1,3 +1,4 @@
+mod crops;
 mod geo;
 mod model;
 mod pam_fallback;
@@ -20,7 +21,7 @@ use tower_http::{
 };
 
 use geo::{LatLng, Point};
-use model::{AnalogYears, Objective, RecentCrop};
+use model::{AnalogYears, Objective};
 use sources::{Climate, DataClient, Pam, Place, RainSeries, Soil, Terrain};
 
 /// Demo field ("Fazenda Horizonte") in the western Bahia Cerrado, ~120 ha.
@@ -169,9 +170,18 @@ async fn diagnosis(State(st): State<AppState>, Json(req): Json<PolygonReq>) -> R
 struct SimulateReq {
     polygon: Vec<LatLng>,
     objective: Objective,
-    /// Collected on the "Objetivos" screen; not used by the v0.2 indices.
-    #[allow(dead_code)]
-    recent_crop: RecentCrop,
+    /// The farmer's last three seasons; repeated over 2027–2029 as "Rotação atual".
+    #[serde(default = "default_rotation")]
+    current_rotation: Vec<String>,
+    /// Optional rotation built by the farmer ("Minha rotação").
+    #[serde(default)]
+    my_rotation: Option<Vec<String>>,
+    #[serde(default)]
+    custom_crops: Vec<crops::CustomCropReq>,
+}
+
+fn default_rotation() -> Vec<String> {
+    vec!["soja".into(); 3]
 }
 
 #[derive(Serialize)]
@@ -190,6 +200,7 @@ async fn simulate(State(st): State<AppState>, Json(req): Json<SimulateReq>) -> R
     if !geo::valid_polygon(&req.polygon) {
         return Err(bad_request("Área inválida."));
     }
+    let resolved = crops::resolve(&req.current_rotation, req.my_rotation.as_deref(), &req.custom_crops).map_err(|e| bad_request(&e))?;
     let c = geo::centroid(&req.polygon);
     let g = gather(&st.data, &req.polygon).await;
     let analog = model::analog_years(&g.rain);
@@ -199,8 +210,12 @@ async fn simulate(State(st): State<AppState>, Json(req): Json<SimulateReq>) -> R
         soil: &g.soil,
         terrain: &g.terrain,
         pam: &g.pam,
+        rain: &g.rain,
         lat: c.lat,
         objective: req.objective,
+        current: resolved.current,
+        mine: resolved.mine,
+        customs: resolved.customs,
     });
     let any_offline = !(g.climate.live && g.rain.live && g.soil.live && g.terrain.live && g.pam.live);
     let pct = (model::LOSS_THRESHOLD * 100.0).round();
@@ -212,6 +227,7 @@ async fn simulate(State(st): State<AppState>, Json(req): Json<SimulateReq>) -> R
         "Água = evapotranspiração da cultura (FAO-56 Penman–Monteith com dados NASA POWER × Kc da FAO para semeadura em novembro) comparada à chuva efetiva (USDA-SCS) do cenário. No índice de folga hídrica, 50 significa chuva efetiva igual à necessidade da cultura.".into(),
         format!("Solo = RUSLE: erosividade R (Lombardi Neto, chuva NASA POWER), erodibilidade K (Williams, SoilGrids), LS com declividade SRTM de {:.1}% e rampa de {} m, fator C de referência para plantio direto (soja 0,20; milho 0,12; cobertura 0,04; palhada reduz o C da cultura seguinte em 30%).", g.terrain.slope_pct, model::SLOPE_LENGTH_M),
         "Uma safra principal por ano (outubro a março); safrinha e irrigação não modeladas. Cobertura vegetal não gera receita direta.".into(),
+        "Culturas descritas por você: Kc pelo tipo (FAO-56, Tabelas 11 e 12), risco pela resposta à água Ky (FAO-33, via FAO-66 Tabela 1) nas safras análogas reais. Sem receita: preço e produtividade desconhecidos. Pousio = solo descoberto (fator C = 1).".into(),
     ];
     Ok(Json(SimulateRes {
         sources: sources_for(&g),

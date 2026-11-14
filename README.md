@@ -85,7 +85,7 @@ Resultado para a fazenda de exemplo (Luís Eduardo Magalhães, BA):
 - **Uma safra principal por ano:** safrinha e irrigação não são modeladas.
 - **Cobertura vegetal:** não gera receita. O efeito da palhada na produtividade da safra seguinte não é estimado; só o efeito na erosão.
 - **Coeficientes de literatura:** os valores de Kc e do fator C vêm da literatura e merecem revisão agronômica.
-- **Cultura recente:** a resposta da tela "O que foi plantado recentemente?" ainda não altera os índices.
+- **Rotação atual e culturas do produtor:** a tela "Sua rotação" define a rotação atual (repetida em 2027–2029). Culturas descritas pelo produtor usam valores do tipo de planta (Kc da FAO-56, Ky da FAO-33 via FAO-66) e não têm receita; aparecem sempre como "estimado". Ver `spec_rotation_custom_crops.md` e `backend/src/crops.rs`.
 
 ## Próximos passos sugeridos
 

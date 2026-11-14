@@ -136,3 +136,14 @@ export function AppHeader({
     </header>
   )
 }
+
+/** Marks anything derived from a crop the farmer described. */
+export function EstTag({ dark = false }: { dark?: boolean }) {
+  const { t } = useI18n()
+  return (
+    <span className={`est-tag ${dark ? 'dark' : ''}`} title={t('common.estimatedTitle')}>
+      <Sigma size={10} />
+      {t('common.estimated')}
+    </span>
+  )
+}

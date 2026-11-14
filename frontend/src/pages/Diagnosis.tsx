@@ -48,7 +48,7 @@ export default function DiagnosisPage() {
         farmName={farmLabel(t, s.farm)}
         page={t('diag.page')}
         step={1}
-        action={<Button onClick={() => nav('/objetivos')} icon={<ArrowRight size={16} />}>{t('common.continue')}</Button>}
+        action={<Button onClick={() => nav('/rotacao')} icon={<ArrowRight size={16} />}>{t('common.continue')}</Button>}
       />
       <main className="page fit">
         <div className="page-title">
@@ -152,7 +152,7 @@ export default function DiagnosisPage() {
               <span style={{ fontSize: 12.5, color: 'rgba(255,255,255,.72)', lineHeight: 1.45 }}>
                 {t('diag.insightNote', { n: d.analogYears.seasons.length, place: d.yieldPlace })}
               </span>
-              <Button variant="accent" onClick={() => nav('/objetivos')} icon={<ArrowRight size={18} />} style={{ alignSelf: 'flex-start' }}>
+              <Button variant="accent" onClick={() => nav('/rotacao')} icon={<ArrowRight size={18} />} style={{ alignSelf: 'flex-start' }}>
                 {t('diag.explore')}
               </Button>
             </div>

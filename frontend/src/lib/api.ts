@@ -1,4 +1,5 @@
 import { currentLang } from './i18n'
+import type { CropType, CustomCrop, Straw, Water } from './crops'
 
 export type LatLng = [number, number]
 
@@ -75,23 +76,24 @@ export interface Diagnosis {
   sources: SourceInfo[]
 }
 
-export type CropId = 'soja' | 'milho' | 'cobertura'
+/** Built-in crop id ("soja", "milho", "cobertura", "pousio") or a farmer-defined id ("custom-1"). */
+export type CropKey = string
 export type ScenarioId = 'seco' | 'tipico' | 'chuvoso'
 export type Objective = 'lucro' | 'solo' | 'seguranca' | 'equilibrio'
-export type RecentCrop = 'soja' | 'milho' | 'outra' | 'naosei'
 
 export interface YearOutcome {
   year: number
-  crop: CropId
+  crop: CropKey
   cropName: string
   seasonRainMm: number
-  returnIdx: number
+  /** null = not available (crops described by the farmer have no price or yield). */
+  returnIdx: number | null
   waterDemandIdx: number
   waterBalanceIdx: number
   soilIdx: number
   riskIdx: number
-  revenueBrlHa: number
-  yieldKgHa: number
+  revenueBrlHa: number | null
+  yieldKgHa: number | null
   etcMm: number
   effRainMm: number
   deficitMm: number
@@ -99,14 +101,15 @@ export interface YearOutcome {
   lossSeasons: number
   analogSeasons: number
   harvest: boolean
+  estimated: boolean
 }
 
 export interface Summary {
-  returnIdx: number
+  returnIdx: number | null
   waterSavingIdx: number
   soilIdx: number
   resilienceIdx: number
-  revenueBrlHa: number
+  revenueBrlHa: number | null
   soilLossTHa: number
   deficitMm: number
 }
@@ -118,7 +121,7 @@ export interface ScenarioYield {
 }
 
 export interface CropCalibration {
-  crop: CropId
+  crop: CropKey
   firstYear: number
   lastYear: number
   years: number
@@ -150,8 +153,9 @@ export interface Strategy {
   id: string
   name: string
   icon: string
-  sequence: CropId[]
+  sequence: CropKey[]
   tagline: string
+  estimated: boolean
   scenarios: Record<ScenarioId, ScenarioResult>
 }
 
@@ -160,10 +164,33 @@ export interface Simulation {
   strategies: Strategy[]
   recommended: string
   calibration: Calibration
+  customParams: CustomParams[]
   analogYears: AnalogYears
   demo: boolean
   assumptions: string[]
   sources: SourceInfo[]
+}
+
+export interface CustomParams {
+  key: string
+  name: string
+  type: CropType
+  cycleDays: number
+  plantingMonth: number
+  water: Water
+  straw: Straw
+  kcMid: number
+  ky: number | null
+  cFactor: number
+  source: string
+}
+
+export interface SimulateReq {
+  polygon: LatLng[]
+  objective: Objective
+  currentRotation: CropKey[]
+  myRotation?: CropKey[]
+  customCrops: CustomCrop[]
 }
 
 async function call<T>(path: string, body?: unknown): Promise<T> {
@@ -190,6 +217,5 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
 export const api = {
   demoFarm: () => call<Farm>('/demo-farm'),
   diagnosis: (polygon: LatLng[]) => call<Diagnosis>('/diagnosis', { polygon }),
-  simulate: (polygon: LatLng[], objective: Objective, recentCrop: RecentCrop) =>
-    call<Simulation>('/simulate', { polygon, objective, recentCrop }),
+  simulate: (req: SimulateReq) => call<Simulation>('/simulate', req),
 }
