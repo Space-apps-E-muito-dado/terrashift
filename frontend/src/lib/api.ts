@@ -1,3 +1,5 @@
+import { currentLang } from './i18n'
+
 export type LatLng = [number, number]
 
 export interface Farm {
@@ -171,10 +173,12 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
     body: body ? JSON.stringify(body) : undefined,
   })
   if (!res.ok) {
-    let msg = 'Não conseguimos falar com o servidor.'
+    // The API answers in Portuguese; in English we show a generic message.
+    const pt = currentLang() === 'pt'
+    let msg = pt ? 'Não conseguimos falar com o servidor.' : 'We could not reach the server.'
     try {
       const j = await res.json()
-      if (j?.error) msg = j.error
+      if (j?.error && pt) msg = j.error
     } catch {
       /* ignore */
     }

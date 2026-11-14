@@ -2,110 +2,148 @@ import { Navigate, useNavigate } from 'react-router-dom'
 import { ArrowLeft, ArrowRight, ChevronDown, Coins, Columns3, Download, Layers, MapPin, Microscope, ShieldCheck } from 'lucide-react'
 import { AppHeader, Button, DemoBadge, SourceLabel } from '../components/ui'
 import type { Simulation, Strategy } from '../lib/api'
-import { CROPS, SCENARIOS, STRATEGY_ICONS, brlMil, cropRole, fmtDec, fmtInt, fmtPrice, safra } from '../lib/meta'
+import { assumptionLines, sourceLines } from '../lib/explain'
+import { useI18n, type T } from '../lib/i18n'
+import {
+  CROPS,
+  SCENARIOS,
+  STRATEGY_ICONS,
+  brlMil,
+  cropName,
+  cropRole,
+  farmLabel,
+  fmtDec,
+  fmtInt,
+  fmtNum,
+  fmtPrice,
+  regionLabel,
+  safra,
+  scenarioName,
+  strategyName,
+} from '../lib/meta'
 import { useStore, type FarmSel } from '../lib/store'
 
-function report(farm: FarmSel, sim: Simulation, st: Strategy): string {
-  const t = st.scenarios.tipico
+function report(t: T, farm: FarmSel, sim: Simulation, st: Strategy): string {
+  const typ = st.scenarios.tipico
   const c = sim.calibration
+  const of = t('report.of')
   const lines = [
-    `# Plano de rotação — ${farm.name}`,
+    `# ${t('report.title', { name: farmLabel(t, farm) })}`,
     '',
-    `Área: ${farm.areaHa} ha · ${farm.region}`,
-    `Estratégia: ${st.name} (${st.sequence.map((x) => CROPS[x].name).join(' → ')})`,
+    t('report.area', { ha: farm.areaHa, region: regionLabel(t, farm) }),
+    t('report.strategy', { name: strategyName(t, st.id), seq: st.sequence.map((x) => cropName(t, x)).join(' → ') }),
     '',
-    '> Estimativas calculadas com dados públicos (NASA POWER, IBGE PAM, SoilGrids, SRTM). Não substituem análise agronômica local nem garantem resultados. Receita bruta: custos de produção não incluídos.',
+    `> ${t('report.disclaimer')}`,
     '',
-    '## Rotação 2027–2029 (safra típica)',
+    `## ${t('report.rotation')}`,
     '',
-    '| Ano | Cultura | Produtividade (kg/ha) | Receita bruta (R$/ha) | ETc / chuva efetiva (mm) | Perda de solo (t/ha) | Safras análogas com quebra |',
+    t('report.rotationHead'),
     '|---|---|---|---|---|---|---|',
-    ...t.years.map(
+    ...typ.years.map(
       (y) =>
-        `| ${y.year} | ${y.cropName} | ${y.harvest ? fmtInt(y.yieldKgHa) : '—'} | ${fmtInt(y.revenueBrlHa)} | ${y.etcMm} / ${y.effRainMm} | ${fmtDec(y.soilLossTHa)} | ${y.harvest ? `${y.lossSeasons} de ${y.analogSeasons}` : '—'} |`,
+        `| ${y.year} | ${cropName(t, y.crop)} | ${y.harvest ? fmtInt(y.yieldKgHa) : '—'} | ${fmtInt(y.revenueBrlHa)} | ${y.etcMm} / ${y.effRainMm} | ${fmtDec(y.soilLossTHa)} | ${y.harvest ? `${y.lossSeasons} ${of} ${y.analogSeasons}` : '—'} |`,
     ),
     '',
-    '## Resumo por cenário climático',
+    `## ${t('report.byScenario')}`,
     '',
-    '| Cenário | Safras de referência | Receita média (R$/ha/ano) | Folga hídrica | Perda de solo (t/ha/ano) | Resiliência |',
+    t('report.byScenarioHead'),
     '|---|---|---|---|---|---|',
     ...SCENARIOS.map((sc) => {
       const v = st.scenarios[sc.id].summary
-      return `| ${sc.name} | ${sim.analogYears[sc.id].map(safra).join(', ')} | ${fmtInt(v.revenueBrlHa)} | ${v.waterSavingIdx} | ${fmtDec(v.soilLossTHa)} | ${v.resilienceIdx} |`
+      return `| ${scenarioName(t, sc.id)} | ${sim.analogYears[sc.id].map(safra).join(', ')} | ${fmtInt(v.revenueBrlHa)} | ${v.waterSavingIdx} | ${fmtDec(v.soilLossTHa)} | ${v.resilienceIdx} |`
     }),
     '',
-    `## Calibração (${c.yieldPlace}, ${c.yieldLevel})`,
+    `## ${t('plan.calib', { place: c.yieldPlace, level: t(`plan.level.${c.yieldLevel}` as 'plan.level.município'), source: t('source.ibgeName', { offline: sim.sources[2]?.live === false ? 1 : 0 }) })}`,
     '',
-    '| Cultura | Série IBGE | Tendência (kg/ha) | Preço (R$/kg) | Razão seca / típica / chuvosa |',
+    t('report.calibHead'),
     '|---|---|---|---|---|',
-    ...c.crops.map((x) => `| ${CROPS[x.crop].name} | ${x.firstYear}–${x.lastYear} | ${fmtInt(x.trendYieldKgHa)} | ${fmtPrice(x.priceBrlKg)} | ${x.seco.ratio} / ${x.tipico.ratio} / ${x.chuvoso.ratio} |`),
+    ...c.crops.map(
+      (x) =>
+        `| ${cropName(t, x.crop)} | ${x.firstYear}–${x.lastYear} | ${fmtInt(x.trendYieldKgHa)} | ${fmtPrice(x.priceBrlKg)} | ${fmtNum(x.seco.ratio, 3)} / ${fmtNum(x.tipico.ratio, 3)} / ${fmtNum(x.chuvoso.ratio, 3)} |`,
+    ),
     '',
-    `Solo (RUSLE): K = ${c.soil.kFactor}, LS = ${c.soil.lsFactor} (declividade ${c.soil.slopePct}% · rampa ${c.soil.slopeLengthM} m), R típico = ${c.soil.rFactorTipico}. ET₀ nov–mar = ${c.et0SeasonMm} mm.`,
+    soilCalib(t, sim),
     '',
-    '## Fontes',
+    `## ${t('report.sources')}`,
     '',
-    ...sim.sources.map((x) => `- ${x.dataset} — ${x.detail}${x.live ? '' : ' (exemplo offline)'}`),
+    ...sourceLines(t, sim).map((x) => `- ${x.dataset} — ${x.detail}${x.live ? '' : ` (${t('common.offlineExample')})`}`),
     '',
-    '## Hipóteses',
+    `## ${t('report.assumptions')}`,
     '',
-    ...sim.assumptions.map((a) => `- ${a}`),
+    ...assumptionLines(t, sim).map((a) => `- ${a}`),
     '',
   ]
   return lines.join('\n')
 }
 
+function soilCalib(t: T, sim: Simulation) {
+  const c = sim.calibration
+  return t('plan.soilCalib', {
+    k: fmtNum(c.soil.kFactor, 4),
+    ls: fmtNum(c.soil.lsFactor, 3),
+    slope: fmtDec(c.soil.slopePct),
+    len: c.soil.slopeLengthM,
+    r: fmtInt(c.soil.rFactorTipico),
+    et0: fmtInt(c.et0SeasonMm),
+  })
+}
+
 export default function Plan() {
   const nav = useNavigate()
   const { s } = useStore()
+  const { t } = useI18n()
   const sim = s.simulation
   if (!s.farm || !sim) return <Navigate to={s.farm ? '/objetivos' : '/terra'} replace />
   const st = sim.strategies.find((x) => x.id === (s.strategyId ?? sim.recommended))!
-  const t = st.scenarios.tipico
+  const typ = st.scenarios.tipico
   const StIcon = STRATEGY_ICONS[st.icon]
   // Real data in every index, but small samples (8–9 analog seasons) and literature coefficients:
-  // "moderada" while everything is live, "baixa" when any source fell back to offline data.
+  // "moderate" while everything is live, "low" when any source fell back to offline data.
   const conf = sim.demo ? 2 : 3
   const cal = sim.calibration
-  // Worst cash crop of the plan in seasons with a strong veranico (same historical seasons for every year,
-  // so they must not be summed across the three years).
+  // Worst cash crop of the plan in seasons with a strong dry spell (the same historical seasons apply
+  // to every year, so they must not be summed across the three years).
   const worstDry = st.scenarios.seco.years
     .filter((y) => y.harvest && y.analogSeasons > 0)
     .sort((a, b) => b.lossSeasons / b.analogSeasons - a.lossSeasons / a.analogSeasons)[0]
+  const sources = sourceLines(t, sim)
+  const farmName = farmLabel(t, s.farm)
 
   function exportReport() {
-    const blob = new Blob([report(s.farm!, sim!, st)], { type: 'text/markdown;charset=utf-8' })
+    const blob = new Blob([report(t, s.farm!, sim!, st)], { type: 'text/markdown;charset=utf-8' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
-    a.download = `plano-${s.farm!.name.toLowerCase().replace(/\s+/g, '-')}.md`
+    a.download = `${t('plan.file')}-${farmName.toLowerCase().replace(/\s+/g, '-')}.md`
     a.click()
     URL.revokeObjectURL(a.href)
   }
 
   return (
     <div className="screen">
-      <AppHeader demo={s.farm.isDemo} farmName={s.farm.name} page="Meu plano agrícola" />
+      <AppHeader demo={s.farm.isDemo} farmName={farmName} page={t('plan.page')} />
       <main className="page wide">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 16, flexWrap: 'wrap' }}>
           <div className="page-title">
-            <h1>Seu plano para os próximos anos.</h1>
+            <h1>{t('plan.title')}</h1>
             <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
-              <span className="chip"><StIcon size={14} color="var(--forest-700)" /> Estratégia {st.name.toLowerCase()}</span>
-              <span className="chip"><MapPin size={14} color="var(--forest-700)" /> {s.farm.name} · {s.farm.areaHa} ha</span>
+              <span className="chip"><StIcon size={14} color="var(--forest-700)" /> {t('strategy.chip', { name: strategyName(t, st.id).toLowerCase() })}</span>
+              <span className="chip"><MapPin size={14} color="var(--forest-700)" /> {farmName} · {s.farm.areaHa} ha</span>
             </div>
           </div>
-          {sim.demo ? <DemoBadge label="Inclui dados offline" /> : <SourceLabel kind="estimate" dataset="dados reais + modelo" />}
+          {sim.demo ? <DemoBadge label={t('common.offlineIncluded')} /> : <SourceLabel kind="estimate" dataset={t('common.realData')} />}
         </div>
 
         <div className="plan-row">
-          {t.years.flatMap((y, i) => {
+          {typ.years.flatMap((y, i) => {
             const C = CROPS[y.crop]
+            const name = cropName(t, y.crop)
             const el = (
               <article key={y.year} className="plan-step">
-                <img src={C.photo} alt={C.name} />
+                <img src={C.photo} alt={name} />
                 <span className="yr">{y.year}</span>
                 <div className="txt">
-                  <strong><C.icon size={20} /> {C.name}</strong>
-                  <p>{cropRole(y.crop, i > 0 ? t.years[i - 1].crop : undefined)}</p>
+                  <strong><C.icon size={20} /> {name}</strong>
+                  <p>{cropRole(t, y.crop, i > 0 ? typ.years[i - 1].crop : undefined)}</p>
                 </div>
               </article>
             )
@@ -116,18 +154,24 @@ export default function Plan() {
         <div className="why">
           <div>
             <span className="icon-wrap" style={{ background: 'rgba(36,90,67,.1)', color: 'var(--forest-700)' }}><Coins size={20} /></span>
-            <span><strong>R$ {brlMil(t.summary.revenueBrlHa)}</strong><small>/ha/ano</small><p>Receita bruta média na safra típica</p></span>
+            <span><strong>R$ {brlMil(typ.summary.revenueBrlHa)}</strong><small>{t('plan.perHaYear')}</small><p>{t('plan.revenue')}</p></span>
           </div>
           <div>
             <span className="icon-wrap" style={{ background: 'rgba(217,166,94,.2)', color: '#9a6b2c' }}><Layers size={20} /></span>
-            <span><strong>{fmtDec(t.summary.soilLossTHa)} t</strong><small>/ha/ano</small><p>Perda de solo estimada (rotação atual: {fmtDec(sim.baseline.scenarios.tipico.summary.soilLossTHa)} t)</p></span>
+            <span>
+              <strong>{fmtDec(typ.summary.soilLossTHa)} t</strong><small>{t('plan.perHaYear')}</small>
+              <p>{t('plan.soil', { base: fmtDec(sim.baseline.scenarios.tipico.summary.soilLossTHa) })}</p>
+            </span>
           </div>
           <div>
             <span className="icon-wrap" style={{ background: 'rgba(117,185,223,.18)', color: 'var(--sky-ink)' }}><ShieldCheck size={20} /></span>
             {worstDry ? (
-              <span><strong>{worstDry.lossSeasons} de {worstDry.analogSeasons}</strong><small> safras</small><p>Safras com veranico em que a produtividade de {worstDry.cropName.toLowerCase()} quebrou</p></span>
+              <span>
+                <strong>{t('lab.riskValue', { n: worstDry.lossSeasons, total: worstDry.analogSeasons })}</strong><small> {t('plan.seasons')}</small>
+                <p>{t('plan.risk', { crop: cropName(t, worstDry.crop).toLowerCase() })}</p>
+              </span>
             ) : (
-              <span><strong>Sem colheita</strong><p>Nenhuma cultura comercial exposta ao veranico</p></span>
+              <span><strong>{t('lab.noHarvest')}</strong><p>{t('plan.noHarvest')}</p></span>
             )}
           </div>
         </div>
@@ -135,61 +179,62 @@ export default function Plan() {
         <details className="card how">
           <summary>
             <Microscope size={18} color="var(--forest-700)" />
-            <strong>Como calculamos esses resultados?</strong>
+            <strong>{t('plan.how')}</strong>
             <span className="chips">
-              {[...new Set(sim.sources.map((x) => x.dataset))].map((d) => <span key={d}>{d}</span>)}
+              {[...new Set(sources.map((x) => x.dataset))].map((d) => <span key={d}>{d}</span>)}
             </span>
             <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center', fontSize: 12 }} className="muted">
-              Confiabilidade
+              {t('plan.confidence')}
               <span className="meter">{[0, 1, 2, 3, 4].map((i) => <i key={i} className={i < conf ? 'on' : ''} />)}</span>
-              <strong style={{ color: 'var(--earth-ink)' }}>{conf >= 3 ? 'Moderada' : 'Baixa'}</strong>
+              <strong style={{ color: 'var(--earth-ink)' }}>{conf >= 3 ? t('plan.conf.moderate') : t('plan.conf.low')}</strong>
             </span>
             <ChevronDown size={18} className="chev" />
           </summary>
           <div className="how-body">
             <div style={{ gridColumn: '1 / -1' }}>
-              <h4>Calibração com {cal.yieldPlace} ({cal.yieldLevel}, {cal.yieldSource})</h4>
+              <h4>{t('plan.calib', { place: cal.yieldPlace, level: t(`plan.level.${cal.yieldLevel}` as 'plan.level.município'), source: t('source.ibgeName', { offline: sim.sources[2]?.live === false ? 1 : 0 }) })}</h4>
               <table className="calib">
                 <thead>
-                  <tr><th>Cultura</th><th>Série</th><th>Tendência</th><th>Preço</th><th>Safras secas</th><th>Típicas</th><th>Chuvosas</th></tr>
+                  <tr>
+                    <th>{t('plan.th.crop')}</th><th>{t('plan.th.series')}</th><th>{t('plan.th.trend')}</th><th>{t('plan.th.price')}</th>
+                    <th>{t('plan.th.dry')}</th><th>{t('plan.th.typical')}</th><th>{t('plan.th.wet')}</th>
+                  </tr>
                 </thead>
                 <tbody>
                   {cal.crops.map((c) => (
                     <tr key={c.crop}>
-                      <td>{CROPS[c.crop].name}</td>
+                      <td>{cropName(t, c.crop)}</td>
                       <td>{c.firstYear}–{c.lastYear}</td>
-                      <td>{fmtInt(c.trendYieldKgHa)} kg/ha (+{fmtInt(c.trendGainKgHaYr)}/ano)</td>
+                      <td>{t('plan.trend', { y: fmtInt(c.trendYieldKgHa), g: fmtInt(c.trendGainKgHaYr) })}</td>
                       <td>R$ {fmtPrice(c.priceBrlKg)}/kg</td>
                       {(['seco', 'tipico', 'chuvoso'] as const).map((k) => (
-                        <td key={k}>{Math.round(c[k].ratio * 100)}% da tendência · {c[k].lossSeasons}/{c[k].seasons} quebras</td>
+                        <td key={k}>{t('plan.ratio', { pct: Math.round(c[k].ratio * 100), loss: c[k].lossSeasons, n: c[k].seasons })}</td>
                       ))}
                     </tr>
                   ))}
                 </tbody>
               </table>
-              <p className="muted" style={{ marginTop: 8 }}>
-                Solo (RUSLE): K {cal.soil.kFactor} · LS {cal.soil.lsFactor} (declividade {fmtDec(cal.soil.slopePct)}%, rampa {cal.soil.slopeLengthM} m) · R típico {fmtInt(cal.soil.rFactorTipico)} MJ·mm/ha·h·ano. ET₀ nov–mar: {fmtInt(cal.et0SeasonMm)} mm.
-              </p>
+              <p className="muted" style={{ marginTop: 8 }}>{soilCalib(t, sim)}</p>
             </div>
             <div>
-              <h4>Dados utilizados</h4>
-              <ul>{sim.sources.map((x) => <li key={x.detail}>{x.dataset}: {x.detail}{x.live ? '' : ' — exemplo offline'}</li>)}</ul>
+              <h4>{t('plan.data')}</h4>
+              <ul>{sources.map((x) => <li key={x.detail}>{x.dataset}: {x.detail}{x.live ? '' : ` — ${t('common.offlineExample')}`}</li>)}</ul>
             </div>
             <div>
-              <h4>Hipóteses e limitações</h4>
+              <h4>{t('plan.assumptions')}</h4>
               <ul>
-                {sim.assumptions.map((a) => <li key={a}>{a}</li>)}
-                <li>Estimativas com amostras pequenas (8–9 safras por cenário): não substituem análise agronômica local nem garantem resultados.</li>
+                {assumptionLines(t, sim).map((a) => <li key={a}>{a}</li>)}
+                <li>{t('plan.disclaimer')}</li>
               </ul>
             </div>
           </div>
         </details>
       </main>
       <div className="footer-bar">
-        <Button variant="ghost" onClick={() => nav('/laboratorio')} iconLeft={<ArrowLeft size={18} />}>Voltar ao simulador</Button>
+        <Button variant="ghost" onClick={() => nav('/laboratorio')} iconLeft={<ArrowLeft size={18} />}>{t('plan.back')}</Button>
         <span className="spacer" />
-        <Button variant="secondary" onClick={() => nav('/comparar')} icon={<Columns3 size={18} />}>Comparar outra estratégia</Button>
-        <Button onClick={exportReport} icon={<Download size={18} />}>Exportar relatório</Button>
+        <Button variant="secondary" onClick={() => nav('/comparar')} icon={<Columns3 size={18} />}>{t('plan.compare')}</Button>
+        <Button onClick={exportReport} icon={<Download size={18} />}>{t('plan.export')}</Button>
       </div>
     </div>
   )

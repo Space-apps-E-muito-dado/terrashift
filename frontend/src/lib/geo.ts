@@ -24,8 +24,9 @@ export interface Place {
 }
 
 /** Geocode a city or place name (OpenStreetMap Nominatim, Brazil only). */
-export async function searchPlace(q: string): Promise<Place[]> {
-  const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&countrycodes=br&accept-language=pt-BR&q=${encodeURIComponent(q)}`
+export async function searchPlace(q: string, lang: 'pt' | 'en' = 'pt'): Promise<Place[]> {
+  const al = lang === 'pt' ? 'pt-BR' : 'en'
+  const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&countrycodes=br&accept-language=${al}&q=${encodeURIComponent(q)}`
   const res = await fetch(url)
   if (!res.ok) throw new Error('search failed')
   const rows: { display_name: string; lat: string; lon: string }[] = await res.json()

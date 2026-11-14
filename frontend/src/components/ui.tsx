@@ -2,11 +2,13 @@ import type { ButtonHTMLAttributes, ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { FlaskConical, Globe, LifeBuoy, MapPin, Orbit, Satellite, Sigma, UserRound } from 'lucide-react'
 import type { SourceInfo } from '../lib/api'
-import { STEPS } from '../lib/meta'
+import { STEP_COUNT } from '../lib/meta'
+import { useI18n, type Lang } from '../lib/i18n'
 
 export function Logo() {
+  const { t } = useI18n()
   return (
-    <Link to="/" className="logo" aria-label="TerraShift — início">
+    <Link to="/" className="logo" aria-label={t('common.home')}>
       <span className="logo-mark">
         <Orbit size={18} />
       </span>
@@ -33,30 +35,30 @@ export function Button({
   )
 }
 
-const KIND: Record<SourceInfo['kind'], { label: string; icon: ReactNode }> = {
-  satellite: { label: 'Observado por satélite', icon: <Satellite size={12} /> },
-  regional: { label: 'Dado regional', icon: <Globe size={12} /> },
-  estimate: { label: 'Estimativa', icon: <Sigma size={12} /> },
-  user: { label: 'Informado por você', icon: <UserRound size={12} /> },
+const KIND_ICON: Record<SourceInfo['kind'], ReactNode> = {
+  satellite: <Satellite size={12} />,
+  regional: <Globe size={12} />,
+  estimate: <Sigma size={12} />,
+  user: <UserRound size={12} />,
 }
 
 export function SourceLabel({ kind, dataset, live = true }: { kind: SourceInfo['kind']; dataset?: string; live?: boolean }) {
-  const k = KIND[kind]
+  const { t } = useI18n()
   return (
-    <span className={`source ${live ? '' : 'source-offline'}`} title={live ? undefined : 'Fonte indisponível agora: exibindo valores de exemplo'}>
-      {k.icon}
-      <span>{k.label}</span>
+    <span className={`source ${live ? '' : 'source-offline'}`} title={live ? undefined : t('common.offlineTitle')}>
+      {KIND_ICON[kind]}
+      <span>{t(`src.${kind}`)}</span>
       {dataset && (
         <>
           <i className="source-sep" />
-          <span className="source-ds">{live ? dataset : 'exemplo offline'}</span>
+          <span className="source-ds">{live ? dataset : t('common.offlineExample')}</span>
         </>
       )}
     </span>
   )
 }
 
-export function DemoBadge({ label = 'Dados de demonstração' }: { label?: string }) {
+export function DemoBadge({ label }: { label: string }) {
   return (
     <span className="demo-badge">
       <FlaskConical size={12} />
@@ -67,6 +69,19 @@ export function DemoBadge({ label = 'Dados de demonstração' }: { label?: strin
 
 export function Spinner({ size = 18 }: { size?: number }) {
   return <span className="spinner" style={{ width: size, height: size }} aria-hidden />
+}
+
+export function LangSwitch() {
+  const { lang, setLang, t } = useI18n()
+  return (
+    <div className="lang-switch" role="radiogroup" aria-label={t('common.language')}>
+      {(['pt', 'en'] as Lang[]).map((l) => (
+        <button key={l} role="radio" aria-checked={lang === l} className={lang === l ? 'on' : ''} onClick={() => setLang(l)} lang={l === 'pt' ? 'pt-BR' : 'en'}>
+          {l.toUpperCase()}
+        </button>
+      ))}
+    </div>
+  )
 }
 
 export function AppHeader({
@@ -83,6 +98,7 @@ export function AppHeader({
   demo?: boolean
 }) {
   const nav = useNavigate()
+  const { t } = useI18n()
   return (
     <header className="app-header">
       <div className="ah-left">
@@ -90,7 +106,7 @@ export function AppHeader({
         <i className="ah-div" />
         <div className="ah-ctx">
           <MapPin size={16} />
-          <strong>{farmName ?? 'Nova propriedade'}</strong>
+          <strong>{farmName ?? t('common.newProperty')}</strong>
           {page && (
             <>
               <span className="ah-sep">/</span>
@@ -100,34 +116,23 @@ export function AppHeader({
         </div>
       </div>
       {step !== undefined && (
-        <div className="stepper" aria-label={`Etapa ${step + 1} de ${STEPS.length}`}>
+        <div className="stepper" aria-label={t('common.stepAria', { n: step + 1, total: STEP_COUNT })}>
           <div className="stepper-bars">
-            {STEPS.map((_, i) => (
+            {Array.from({ length: STEP_COUNT }, (_, i) => (
               <i key={i} className={i < step ? 'done' : i === step ? 'current' : ''} />
             ))}
           </div>
-          <span>
-            {step + 1} de {STEPS.length} — {STEPS[step]}
-          </span>
+          <span>{t('common.stepOf', { n: step + 1, total: STEP_COUNT, name: t(`steps.${step}` as 'steps.0') })}</span>
         </div>
       )}
       <div className="ah-right">
-        {demo && <DemoBadge label="Fazenda de exemplo" />}
-        <button className="icon-btn" aria-label="Ajuda" onClick={() => nav('/')}>
+        {demo && <DemoBadge label={t('common.demoFarm')} />}
+        <LangSwitch />
+        <button className="icon-btn" aria-label={t('common.help')} onClick={() => nav('/')}>
           <LifeBuoy size={18} />
         </button>
         {action}
       </div>
     </header>
-  )
-}
-
-export function ErrorState({ title, text, action }: { title: string; text: string; action?: ReactNode }) {
-  return (
-    <div className="state-card">
-      <strong>{title}</strong>
-      <p className="muted">{text}</p>
-      {action}
-    </div>
   )
 }

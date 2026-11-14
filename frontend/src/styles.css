@@ -528,3 +528,8 @@ h1, h2, h3, p { margin: 0; }
   .fab { font-size: 14px; bottom: 16px; }
   .lab-map .glass { font-size: 12px; padding: 6px 10px; }
 }
+
+/* ---------- Language switch ---------- */
+.lang-switch { display: inline-flex; padding: 3px; border-radius: 10px; background: #f1f3ee; border: 1px solid var(--border); }
+.lang-switch button { border: 0; background: none; min-width: 34px; height: 30px; border-radius: 7px; font-size: 12px; font-weight: 700; color: var(--muted); letter-spacing: 0.4px; }
+.lang-switch button.on { background: #fff; color: var(--forest-900); box-shadow: 0 1px 3px rgba(21, 62, 47, 0.15); }

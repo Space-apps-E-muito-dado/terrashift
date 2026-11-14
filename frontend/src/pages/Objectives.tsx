@@ -3,14 +3,15 @@ import { Navigate, useNavigate } from 'react-router-dom'
 import { Bean, Check, CircleDashed, Sparkles, Sprout, Wheat } from 'lucide-react'
 import { AppHeader, Button, Spinner } from '../components/ui'
 import { api, type RecentCrop } from '../lib/api'
-import { OBJECTIVES } from '../lib/meta'
+import { OBJECTIVES, farmLabel } from '../lib/meta'
+import { useI18n } from '../lib/i18n'
 import { useStore } from '../lib/store'
 
-const RECENT: { id: RecentCrop; name: string; icon: typeof Bean }[] = [
-  { id: 'soja', name: 'Soja', icon: Bean },
-  { id: 'milho', name: 'Milho', icon: Wheat },
-  { id: 'outra', name: 'Outra cultura', icon: Sprout },
-  { id: 'naosei', name: 'Não sei', icon: CircleDashed },
+const RECENT: { id: RecentCrop; icon: typeof Bean }[] = [
+  { id: 'soja', icon: Bean },
+  { id: 'milho', icon: Wheat },
+  { id: 'outra', icon: Sprout },
+  { id: 'naosei', icon: CircleDashed },
 ]
 
 const ART: Record<string, string> = {
@@ -23,6 +24,7 @@ const ART: Record<string, string> = {
 export default function Objectives() {
   const nav = useNavigate()
   const { s, set } = useStore()
+  const { t } = useI18n()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
   if (!s.farm) return <Navigate to="/terra" replace />
@@ -44,14 +46,14 @@ export default function Objectives() {
 
   return (
     <div className="screen">
-      <AppHeader demo={s.farm.isDemo} farmName={s.farm.name} page="Objetivos" step={2} />
+      <AppHeader demo={s.farm.isDemo} farmName={farmLabel(t, s.farm)} page={t('obj.page')} step={2} />
       <main className="center-col">
         <div className="page-title">
-          <h1>O que você deseja para o futuro da sua terra?</h1>
-          <p>Não existe uma única escolha perfeita. Vamos encontrar as opções que fazem mais sentido para você.</p>
+          <h1>{t('obj.title')}</h1>
+          <p>{t('obj.lead')}</p>
         </div>
 
-        <div className="obj-grid" role="radiogroup" aria-label="Objetivo">
+        <div className="obj-grid" role="radiogroup" aria-label={t('obj.aria')}>
           {OBJECTIVES.map((o) => {
             const on = s.objective === o.id
             return (
@@ -61,9 +63,9 @@ export default function Objectives() {
                     <o.icon size={22} />
                   </span>
                   <span>
-                    <strong>{o.title}</strong>
+                    <strong>{t(`objective.${o.id}.title`)}</strong>
                     <br />
-                    <small>{o.desc}</small>
+                    <small>{t(`objective.${o.id}.desc`)}</small>
                   </span>
                 </div>
                 <svg className="art" viewBox="0 0 200 90" aria-hidden style={{ background: `radial-gradient(circle at 70% 30%, ${o.color}${on ? '33' : '1F'}, transparent 70%)` }}>
@@ -77,15 +79,15 @@ export default function Objectives() {
 
         <div className="card crop-q">
           <div>
-            <strong>O que foi plantado recentemente?</strong>
-            <p className="muted" style={{ fontSize: 13, marginTop: 4 }}>Ajuda a estimar o efeito da rotação no solo.</p>
+            <strong>{t('obj.recentQ')}</strong>
+            <p className="muted" style={{ fontSize: 13, marginTop: 4 }}>{t('obj.recentNote')}</p>
           </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }} role="radiogroup" aria-label="Cultura recente">
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }} role="radiogroup" aria-label={t('obj.recentAria')}>
             {RECENT.map((r) => {
               const on = s.recentCrop === r.id
               return (
                 <button key={r.id} role="radio" aria-checked={on} className={`chip ${on ? 'on' : ''}`} onClick={() => set({ recentCrop: r.id })}>
-                  {on ? <Check size={14} /> : <r.icon size={14} />} {r.name}
+                  {on ? <Check size={14} /> : <r.icon size={14} />} {t(`obj.recent.${r.id}`)}
                 </button>
               )
             })}
@@ -94,9 +96,9 @@ export default function Objectives() {
 
         {error && <div className="error-banner">{error}</div>}
         <div className="row-end">
-          <Button variant="ghost" onClick={() => nav('/diagnostico')}>Voltar ao diagnóstico</Button>
+          <Button variant="ghost" onClick={() => nav('/diagnostico')}>{t('obj.back')}</Button>
           <Button onClick={simulate} disabled={busy} icon={busy ? <Spinner size={16} /> : <Sparkles size={18} color="var(--lime-400)" />} style={{ padding: '16px 24px', fontSize: 16 }}>
-            {busy ? 'Simulando…' : 'Simular meus futuros'}
+            {busy ? t('obj.simulating') : t('obj.simulate')}
           </Button>
         </div>
       </main>

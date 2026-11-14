@@ -41,6 +41,12 @@ Variáveis do backend: `PORT` (padrão 8080), `FRONTEND_DIST` (padrão `../front
 cd backend && cargo test
 ```
 
+## Idiomas / Languages
+
+A interface está em **português e inglês**. O idioma inicial segue o navegador, a escolha feita no seletor **PT | EN** (cabeçalho e landing) fica salva, e a troca vale na hora, inclusive para os números e o relatório exportado. Todos os textos ficam em `frontend/src/lib/i18n.tsx`. A API devolve só dados e identificadores; fontes e hipóteses são montadas no frontend (`frontend/src/lib/explain.ts`).
+
+The interface is available in **Portuguese and English**. The initial language follows the browser; the **PT | EN** switch (header and landing page) is remembered and applies instantly, including number formats and the exported report. All strings live in `frontend/src/lib/i18n.tsx`.
+
 ## De onde vem cada dado
 
 | Na interface | Fonte | Como é usado |

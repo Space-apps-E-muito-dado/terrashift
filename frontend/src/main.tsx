@@ -5,6 +5,7 @@ import '@fontsource-variable/manrope'
 import 'leaflet/dist/leaflet.css'
 import './styles.css'
 import { StoreProvider } from './lib/store'
+import { I18nProvider } from './lib/i18n'
 import Landing from './pages/Landing'
 import SelectArea from './pages/SelectArea'
 import DiagnosisPage from './pages/Diagnosis'
@@ -15,6 +16,7 @@ import Plan from './pages/Plan'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
+    <I18nProvider>
     <StoreProvider>
       <BrowserRouter>
         <Routes>
@@ -29,5 +31,6 @@ createRoot(document.getElementById('root')!).render(
         </Routes>
       </BrowserRouter>
     </StoreProvider>
+    </I18nProvider>
   </StrictMode>,
 )

@@ -6,16 +6,19 @@ import { FarmMap } from '../components/FarmMap'
 import { api, type LatLng } from '../lib/api'
 import { areaHa, searchPlace, type Place } from '../lib/geo'
 import { useStore } from '../lib/store'
+import { useI18n } from '../lib/i18n'
+import { farmLabel, regionLabel } from '../lib/meta'
 
 const STEPS = [
-  { t: 'Consultando clima', s: 'NASA POWER' },
-  { t: 'Analisando solo', s: 'ISRIC SoilGrids' },
-  { t: 'Preparando cenários', s: 'Anos análogos 2001–2024' },
-]
+  { t: 'select.step.climate', s: 'NASA POWER' },
+  { t: 'select.step.soil', s: 'ISRIC SoilGrids · SRTM' },
+  { t: 'select.step.yield', s: 'IBGE PAM' },
+] as const
 
 export default function SelectArea() {
   const nav = useNavigate()
   const { s, set } = useStore()
+  const { t, lang } = useI18n()
   const [mode, setMode] = useState<'idle' | 'draw'>('idle')
   const [draft, setDraft] = useState<LatLng[]>([])
   const [q, setQ] = useState('')
@@ -36,9 +39,9 @@ export default function SelectArea() {
     setError(undefined)
     try {
       const f = await api.demoFarm()
-      set({ farm: { name: f.name, region: f.region, polygon: f.polygon, areaHa: f.areaHa, isDemo: true }, diagnosis: undefined, simulation: undefined })
+      set({ farm: { name: f.name, region: '', polygon: f.polygon, areaHa: f.areaHa, isDemo: true }, diagnosis: undefined, simulation: undefined })
     } catch {
-      setError('Servidor indisponível. Verifique se a API está rodando.')
+      setError(t('select.serverDown'))
     }
   }
 
@@ -51,7 +54,7 @@ export default function SelectArea() {
   function finishDraw() {
     if (draft.length < 3) return
     set({
-      farm: { name: 'Minha propriedade', region: 'Área desenhada no mapa', polygon: draft, areaHa: Math.round(areaHa(draft)), isDemo: false },
+      farm: { name: '', region: '', polygon: draft, areaHa: Math.round(areaHa(draft)), isDemo: false },
       diagnosis: undefined,
       simulation: undefined,
     })
@@ -63,7 +66,7 @@ export default function SelectArea() {
     e.preventDefault()
     if (!q.trim()) return
     try {
-      setResults(await searchPlace(q))
+      setResults(await searchPlace(q, lang))
     } catch {
       setResults([])
     }
@@ -89,19 +92,19 @@ export default function SelectArea() {
 
   return (
     <div className="screen">
-      <AppHeader demo={!!farm?.isDemo} farmName={farm?.name} page={farm ? 'Sua terra' : undefined} step={0} />
+      <AppHeader demo={!!farm?.isDemo} farmName={farm ? farmLabel(t, farm) : undefined} page={farm ? t('select.page') : undefined} step={0} />
       <div className="split">
         <aside className="side">
           <div>
-            <h1>Onde fica sua terra?</h1>
+            <h1>{t('select.title')}</h1>
             <p className="muted" style={{ marginTop: 8, fontSize: 15, lineHeight: 1.5 }}>
-              Vamos começar encontrando sua propriedade no mapa.
+              {t('select.lead')}
             </p>
           </div>
 
           <form className="search" onSubmit={doSearch}>
             <Search size={18} />
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Digite uma cidade ou localização" aria-label="Buscar local" />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('select.search')} aria-label={t('select.searchAria')} />
             {results.length > 0 && (
               <div className="search-results">
                 {results.map((r) => (
@@ -124,12 +127,12 @@ export default function SelectArea() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <button className={`option ${mode === 'draw' ? 'on' : ''}`} onClick={startDraw}>
               <span className="icon-wrap"><PenTool size={17} /></span>
-              <span><strong>Desenhar área no mapa</strong><small>Clique nos cantos do talhão</small></span>
+              <span><strong>{t('select.draw')}</strong><small>{t('select.drawSub')}</small></span>
               <ChevronRight size={16} />
             </button>
             <button className={`option ${farm?.isDemo ? 'on' : ''}`} onClick={useDemo}>
               <span className="icon-wrap"><Sparkles size={17} /></span>
-              <span><strong>Usar fazenda de exemplo</strong><small>Fazenda Horizonte · Cerrado</small></span>
+              <span><strong>{t('select.demo')}</strong><small>{t('select.demoSub')}</small></span>
               {farm?.isDemo ? <Check size={16} color="var(--forest-700)" /> : <ChevronRight size={16} />}
             </button>
           </div>
@@ -137,14 +140,14 @@ export default function SelectArea() {
           {mode === 'draw' && (
             <div className="card" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
               <strong style={{ fontSize: 14, color: 'var(--forest-900)' }}>
-                {draft.length < 3 ? `Marque pelo menos 3 pontos (${draft.length}/3)` : `${draft.length} pontos · ${Math.round(areaHa(draft))} ha`}
+                {draft.length < 3 ? t('select.needPoints', { n: draft.length }) : t('select.points', { n: draft.length, ha: Math.round(areaHa(draft)) })}
               </strong>
               <div style={{ display: 'flex', gap: 8 }}>
                 <Button variant="secondary" onClick={() => setDraft((d) => d.slice(0, -1))} disabled={!draft.length} iconLeft={<Undo2 size={16} />}>
-                  Desfazer
+                  {t('select.undo')}
                 </Button>
                 <Button onClick={finishDraw} disabled={draft.length < 3} icon={<Check size={16} />}>
-                  Concluir área
+                  {t('select.finish')}
                 </Button>
               </div>
             </div>
@@ -156,21 +159,21 @@ export default function SelectArea() {
           {farm && mode !== 'draw' && (
             <div className="card area-card">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span className="status-dot section-label" style={{ color: 'var(--forest-700)' }}>Área selecionada</span>
-                <button className="icon-btn" style={{ width: 32, height: 32, border: 0 }} onClick={startDraw} aria-label="Redesenhar área">
+                <span className="status-dot section-label" style={{ color: 'var(--forest-700)' }}>{t('select.selected')}</span>
+                <button className="icon-btn" style={{ width: 32, height: 32, border: 0 }} onClick={startDraw} aria-label={t('select.redraw')}>
                   <Pencil size={15} />
                 </button>
               </div>
-              <span className="name">{farm.name}</span>
+              <span className="name">{farmLabel(t, farm)}</span>
               <div className="kv">
-                <div><small><SquareDashed size={11} /> Área</small><strong className="big tabular">{farm.areaHa} ha</strong></div>
-                <div><small><MapIcon size={11} /> Região</small><strong>{farm.region}</strong></div>
+                <div><small><SquareDashed size={11} /> {t('select.area')}</small><strong className="big tabular">{farm.areaHa} ha</strong></div>
+                <div><small><MapIcon size={11} /> {t('select.region')}</small><strong>{regionLabel(t, farm)}</strong></div>
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                <SourceLabel kind={farm.isDemo ? 'estimate' : 'user'} dataset={farm.isDemo ? 'Talhão de exemplo' : undefined} />
+                <SourceLabel kind={farm.isDemo ? 'estimate' : 'user'} dataset={farm.isDemo ? t('select.demoField') : undefined} />
               </div>
               <Button className="btn-block" onClick={analyze} disabled={analyzing} icon={analyzing ? <Spinner size={16} /> : <ScanSearch size={18} />}>
-                {analyzing ? 'Analisando…' : 'Analisar minha terra'}
+                {analyzing ? t('select.analyzing') : t('select.analyze')}
               </Button>
             </div>
           )}
@@ -184,30 +187,30 @@ export default function SelectArea() {
         >
           {mode === 'draw' && (
             <div className="map-ui draw-hint glass">
-              <PenTool size={16} /> Clique no mapa para marcar os cantos da área
+              <PenTool size={16} /> {t('select.drawHint')}
             </div>
           )}
           {farm && !analyzing && (
             <div className="map-ui glass" style={{ top: 20, left: 20 }}>
-              <MapPin size={16} /> {farm.name} · {farm.areaHa} ha
+              <MapPin size={16} /> {farmLabel(t, farm)} · {farm.areaHa} ha
             </div>
           )}
           {analyzing && (
             <>
               <div className="scan" />
               <div className="progress-card">
-                <strong style={{ fontSize: 16, color: 'var(--forest-900)' }}>Consultando informações ambientais</strong>
+                <strong style={{ fontSize: 16, color: 'var(--forest-900)' }}>{t('select.progressTitle')}</strong>
                 {STEPS.map((st, i) => (
                   <div key={st.t} className={`row ${i > step ? 'todo' : ''}`}>
                     {i < step ? <span className="check"><Check size={12} /></span> : i === step ? <Spinner size={20} /> : <span className="pending" />}
-                    <span>{st.t}<small>{st.s}</small></span>
+                    <span>{t(st.t)}<small>{st.s}</small></span>
                   </div>
                 ))}
               </div>
             </>
           )}
           <div className="map-ui map-caption" style={{ left: 20, bottom: 20 }}>
-            Imagem: Copernicus Sentinel-2 (EOX s2cloudless) · 10 m
+            {t('map.s2Caption')}
           </div>
         </FarmMap>
       </div>

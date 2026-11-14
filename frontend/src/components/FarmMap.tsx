@@ -3,33 +3,34 @@ import { Minus, Plus } from 'lucide-react'
 import { CircleMarker, MapContainer, Polygon, Polyline, TileLayer, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import type { LatLng } from '../lib/api'
+import { useI18n } from '../lib/i18n'
 
 export type MapLayer = 'real' | 'agua' | 'vegetacao' | 'relevo' | 'solo'
 
 const S2 = {
   url: 'https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2024_3857/default/g/{z}/{y}/{x}.jpg',
   attribution:
-    '<a href="https://s2maps.eu" target="_blank" rel="noreferrer">Sentinel-2 cloudless 2024</a> by EOX — contém dados Copernicus Sentinel modificados',
+    '<a href="https://s2maps.eu" target="_blank" rel="noreferrer">Sentinel-2 cloudless 2024</a> by EOX (Contains modified Copernicus Sentinel data 2024)',
 }
 
 const GIBS = 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best'
-export const OVERLAYS: Record<Exclude<MapLayer, 'real' | 'solo'>, { url: string; maxNative: number; label: string; attribution: string }> = {
+export const OVERLAYS: Record<Exclude<MapLayer, 'real' | 'solo'>, { url: string; maxNative: number; label: 'map.ndvi' | 'map.smap' | 'map.srtm'; attribution: string }> = {
   vegetacao: {
     url: `${GIBS}/MODIS_Terra_L3_NDVI_16Day/default/default/GoogleMapsCompatible_Level9/{z}/{y}/{x}.png`,
     maxNative: 9,
-    label: 'NDVI · MODIS Terra 16 dias · 250 m',
+    label: 'map.ndvi',
     attribution: 'NASA GIBS · MODIS Terra NDVI',
   },
   agua: {
     url: `${GIBS}/SMAP_L4_Analyzed_Root_Zone_Soil_Moisture/default/default/GoogleMapsCompatible_Level6/{z}/{y}/{x}.png`,
     maxNative: 6,
-    label: 'Umidade do solo · SMAP L4 · ~9 km',
+    label: 'map.smap',
     attribution: 'NASA GIBS · SMAP L4',
   },
   relevo: {
     url: `${GIBS}/SRTM_Color_Index/default/default/GoogleMapsCompatible_Level12/{z}/{y}/{x}.png`,
     maxNative: 12,
-    label: 'Elevação · SRTM · 30 m',
+    label: 'map.srtm',
     attribution: 'NASA GIBS · SRTM',
   },
 }
@@ -140,6 +141,7 @@ export function FarmMap({
 
 function ZoomButtons() {
   const map = useMap()
+  const { t } = useI18n()
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (ref.current) {
@@ -149,10 +151,10 @@ function ZoomButtons() {
   }, [])
   return (
     <div ref={ref} className="zoom-ctl">
-      <button aria-label="Aproximar" onClick={() => map.zoomIn()}>
+      <button aria-label={t('common.zoomIn')} onClick={() => map.zoomIn()}>
         <Plus size={18} />
       </button>
-      <button aria-label="Afastar" onClick={() => map.zoomOut()}>
+      <button aria-label={t('common.zoomOut')} onClick={() => map.zoomOut()}>
         <Minus size={18} />
       </button>
     </div>
