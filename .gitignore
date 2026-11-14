@@ -1,0 +1,13 @@
+# Dependencies and builds
+node_modules/
+frontend/dist/
+backend/target/
+
+# Runtime cache of API responses (recreated automatically)
+backend/cache/
+
+# Editor / OS
+.DS_Store
+*.log
+.env
+*.tsbuildinfo
