@@ -22,7 +22,7 @@ use tower_http::{
 
 use geo::{LatLng, Point};
 use model::{AnalogYears, Objective};
-use sources::{Climate, DataClient, Pam, Place, RainSeries, Soil, Terrain};
+use sources::{Climate, DataClient, Pam, Place, PlaceLookup, RainSeries, Soil, Terrain};
 
 /// Demo field ("Fazenda Horizonte") in the western Bahia Cerrado, ~120 ha.
 pub const DEMO_POLYGON: [LatLng; 4] = [
@@ -121,8 +121,12 @@ struct Gathered {
 
 async fn gather(data: &DataClient, poly: &[LatLng]) -> Gathered {
     let c = geo::centroid(poly);
-    let (climate, rain, soil, terrain, place) =
+    let (climate, rain, soil, terrain, lookup) =
         tokio::join!(data.climate(c), data.rain_series(c), data.soil(c), data.terrain(poly), data.place(c));
+    let place = match lookup {
+        PlaceLookup::Found(p) => p,
+        PlaceLookup::OutsideBrazil(_) => sources::fallback_place(),
+    };
     let pam = data.pam(&place).await;
     Gathered { climate, rain, soil, terrain, place, pam }
 }
