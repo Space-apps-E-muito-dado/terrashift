@@ -6,6 +6,7 @@ import { CropThumb } from '../components/CropThumb'
 import { CropPicker } from '../components/CropPicker'
 import { useCropEditor } from '../components/useCropEditor'
 import type { CropKey } from '../lib/api'
+import { isDiagnosisOnly } from '../lib/api'
 import { PAST_YEARS, cropMeta, cropName, farmLabel, safra } from '../lib/meta'
 import { useI18n } from '../lib/i18n'
 import { useStore } from '../lib/store'
@@ -21,6 +22,7 @@ export default function Rotation() {
     set({ currentRotation })
   }
   const editor = useCropEditor(pick)
+  if (isDiagnosisOnly(s.diagnosis)) return <Navigate to="/diagnostico" replace />
   if (!s.farm) return <Navigate to="/terra" replace />
 
   const seq = s.currentRotation.map((k) => cropName(t, k)).join(' → ')

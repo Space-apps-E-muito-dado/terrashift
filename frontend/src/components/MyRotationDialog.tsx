@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { ArrowRight, Sparkles, X } from 'lucide-react'
 import type { CropKey } from '../lib/api'
 import { api } from '../lib/api'
+import { errorMessage } from '../lib/errors'
 import { useI18n } from '../lib/i18n'
 import { PLAN_YEARS, cropMeta, cropName, simulateRequest } from '../lib/meta'
 import { useStore } from '../lib/store'
@@ -40,7 +41,7 @@ export function MyRotationDialog({ onClose, onDone }: { onClose: () => void; onD
       set({ myRotation: draft, simulation: sim, strategyId: 'minha' })
       onDone()
     } catch (e) {
-      setError((e as Error).message)
+      setError(errorMessage(e, t))
     } finally {
       setBusy(false)
     }

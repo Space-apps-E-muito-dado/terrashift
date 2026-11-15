@@ -3,6 +3,7 @@ import { ArrowLeft, ArrowRight, ChevronDown, Coins, Columns3, Download, Layers, 
 import { AppHeader, Button, DemoBadge, EstTag, SourceLabel } from '../components/ui'
 import { CropThumb } from '../components/CropThumb'
 import type { Simulation, Strategy } from '../lib/api'
+import { isDiagnosisOnly } from '../lib/api'
 import { assumptionLines, sourceLines } from '../lib/explain'
 import { useI18n, type T } from '../lib/i18n'
 import {
@@ -110,6 +111,7 @@ export default function Plan() {
   const { s } = useStore()
   const { t } = useI18n()
   const sim = s.simulation
+  if (isDiagnosisOnly(s.diagnosis)) return <Navigate to="/diagnostico" replace />
   if (!s.farm || !sim) return <Navigate to={s.farm ? '/objetivos' : '/terra'} replace />
   const st = sim.strategies.find((x) => x.id === (s.strategyId ?? sim.recommended))!
   const typ = st.scenarios.tipico

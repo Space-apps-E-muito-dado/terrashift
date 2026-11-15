@@ -4,6 +4,7 @@ import { ArrowRight, Check, ChevronsLeftRight, Coins, Droplets, FlaskConical, Hi
 import { AppHeader, Button, DemoBadge, EstTag, SourceLabel } from '../components/ui'
 import { FarmMap } from '../components/FarmMap'
 import type { Strategy } from '../lib/api'
+import { isDiagnosisOnly } from '../lib/api'
 import { CROPS, SCENARIOS, STRATEGY_ICONS, brlMil, cropMeta, cropShort, farmLabel, fmtDec, scenarioName, strategyName, strategyTagline } from '../lib/meta'
 import { useI18n } from '../lib/i18n'
 import { useStore } from '../lib/store'
@@ -25,6 +26,7 @@ export default function Compare() {
   const { t } = useI18n()
   const [split, setSplit] = useState(50)
   const sim = s.simulation
+  if (isDiagnosisOnly(s.diagnosis)) return <Navigate to="/diagnostico" replace />
   if (!s.farm || !sim) return <Navigate to={s.farm ? '/objetivos' : '/terra'} replace />
 
   const selected = s.strategyId ?? sim.recommended
