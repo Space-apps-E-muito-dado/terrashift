@@ -4,6 +4,7 @@ import { Check, Sparkles } from 'lucide-react'
 import { AppHeader, Button, Spinner } from '../components/ui'
 import { api } from '../lib/api'
 import { OBJECTIVES, farmLabel, simulateRequest } from '../lib/meta'
+import { errorMessage } from '../lib/errors'
 import { useI18n } from '../lib/i18n'
 import { useStore } from '../lib/store'
 
@@ -31,7 +32,7 @@ export default function Objectives() {
       set({ simulation: sim, strategyId: sim.recommended, scenario: 'tipico', yearIdx: 1 })
       nav('/laboratorio')
     } catch (e) {
-      setError((e as Error).message)
+      setError(errorMessage(e, t))
     } finally {
       setBusy(false)
     }

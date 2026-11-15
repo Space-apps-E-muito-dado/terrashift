@@ -203,15 +203,27 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
     // The API answers in Portuguese; in English we show a generic message.
     const pt = currentLang() === 'pt'
     let msg = pt ? 'Não conseguimos falar com o servidor.' : 'We could not reach the server.'
+    let code: string | undefined
     try {
       const j = await res.json()
       if (j?.error && pt) msg = j.error
+      if (typeof j?.code === 'string') code = j.code
     } catch {
       /* ignore */
     }
-    throw new Error(msg)
+    throw new ApiError(msg, code)
   }
   return res.json() as Promise<T>
+}
+
+/** An API error; `code` is the server's stable machine code (e.g. "outside_coverage"), when given. */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly code?: string,
+  ) {
+    super(message)
+  }
 }
 
 export const api = {
