@@ -617,7 +617,7 @@ fn round2(x: f64) -> f64 {
 // ---------------------------------------------------------------- offline fallbacks
 // Approximate values for the demo field (western Bahia). Never cached; flagged live=false.
 
-fn fallback_climate() -> Climate {
+pub(crate) fn fallback_climate() -> Climate {
     let pr = [205.0, 165.0, 160.0, 75.0, 12.0, 2.0, 1.0, 3.0, 20.0, 85.0, 175.0, 210.0];
     let t = [24.6, 24.7, 24.6, 24.5, 23.8, 22.9, 22.8, 24.4, 26.4, 26.6, 25.0, 24.6];
     let rh = [73.0, 74.0, 74.0, 68.0, 57.0, 50.0, 47.0, 40.0, 40.0, 52.0, 68.0, 73.0];
@@ -638,7 +638,7 @@ fn fallback_climate() -> Climate {
     c
 }
 
-fn fallback_rain() -> RainSeries {
+pub(crate) fn fallback_rain() -> RainSeries {
     // Climatological monthly shape scaled by an illustrative yearly factor.
     let shape = [205.0, 165.0, 160.0, 75.0, 12.0, 2.0, 1.0, 3.0, 20.0, 85.0, 175.0, 210.0];
     let f = [
@@ -655,7 +655,7 @@ fn fallback_rain() -> RainSeries {
     RainSeries { live: false, source: "Exemplo offline (NASA POWER indisponível)".into(), years }
 }
 
-fn fallback_soil() -> Soil {
+pub(crate) fn fallback_soil() -> Soil {
     let layers = vec![
         SoilLayer { depth: "0–5 cm".into(), clay_pct: 30.0, sand_pct: 49.0, silt_pct: 21.0 },
         SoilLayer { depth: "15–30 cm".into(), clay_pct: 32.0, sand_pct: 47.0, silt_pct: 21.0 },
@@ -665,7 +665,7 @@ fn fallback_soil() -> Soil {
     Soil { live: false, source: "Exemplo offline (SoilGrids indisponível)".into(), layers, soc_g_kg: Some(12.0), texture_class: texture }
 }
 
-fn fallback_terrain() -> Terrain {
+pub(crate) fn fallback_terrain() -> Terrain {
     Terrain { live: false, source: "Exemplo offline (SRTM indisponível)".into(), elevation_m: 790.0, slope_pct: 1.0, samples: 0 }
 }
 
@@ -673,7 +673,7 @@ pub(crate) fn fallback_place() -> Place {
     Place { live: false, municipality: "Luís Eduardo Magalhães".into(), uf: "BA".into(), ibge_code: Some("2919553".into()) }
 }
 
-fn fallback_pam() -> Pam {
+pub(crate) fn fallback_pam() -> Pam {
     let conv = |rows: &[(i32, f64, f64, f64)]| {
         rows.iter().map(|&(year, y, a, v)| PamYear { year, yield_kg_ha: y, area_ha: a, value_thousand_brl: v }).collect()
     };
