@@ -23,6 +23,7 @@ import { CropThumb } from '../components/CropThumb'
 import { MyRotationDialog } from '../components/MyRotationDialog'
 import { FarmMap } from '../components/FarmMap'
 import type { ScenarioId, YearOutcome } from '../lib/api'
+import { isDiagnosisOnly } from '../lib/api'
 import { SCENARIOS, cropMeta, STRATEGY_ICONS, brlMil, cropName, cropShort, farmLabel, fmtDec, fmtInt, fmtNum, fmtPrice, level, safra, scenarioName, strategyName } from '../lib/meta'
 import { useI18n } from '../lib/i18n'
 import { useStore } from '../lib/store'
@@ -115,6 +116,7 @@ export default function Lab() {
   useEffect(() => () => window.clearTimeout(flashTimer.current), [])
 
   const sim = s.simulation
+  if (isDiagnosisOnly(s.diagnosis)) return <Navigate to="/diagnostico" replace />
   if (!s.farm || !sim) return <Navigate to={s.farm ? '/objetivos' : '/terra'} replace />
 
   const strategy = sim.strategies.find((x) => x.id === s.strategyId) ?? sim.strategies[0]

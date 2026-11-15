@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { Check, Sparkles } from 'lucide-react'
 import { AppHeader, Button, Spinner } from '../components/ui'
-import { api } from '../lib/api'
+import { api, isDiagnosisOnly } from '../lib/api'
 import { OBJECTIVES, farmLabel, simulateRequest } from '../lib/meta'
 import { errorMessage } from '../lib/errors'
 import { useI18n } from '../lib/i18n'
@@ -21,6 +21,7 @@ export default function Objectives() {
   const { t } = useI18n()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
+  if (isDiagnosisOnly(s.diagnosis)) return <Navigate to="/diagnostico" replace />
   if (!s.farm) return <Navigate to="/terra" replace />
 
   async function simulate() {
