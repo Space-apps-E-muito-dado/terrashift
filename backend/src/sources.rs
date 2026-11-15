@@ -47,7 +47,7 @@ pub struct MonthClimate {
     pub temp_c: f64,
     /// Relative humidity at 2 m (%).
     pub rh_pct: f64,
-    /// Wind speed at 2 m (m/s).
+    /// Wind speed at 2 m (m/s), derived from POWER `WS10M` (FAO-56 eq. 47).
     pub wind_ms: f64,
     /// All-sky shortwave radiation (MJ/m²/day).
     pub radiation_mj: f64,
@@ -223,12 +223,12 @@ impl DataClient {
     // ---------- NASA POWER: monthly climatology ----------
 
     pub async fn climate(&self, p: Point) -> Climate {
-        self.cached("climate3", &key(p), || self.fetch_climate(p), fallback_climate, |c| c.live).await
+        self.cached("climate4", &key(p), || self.fetch_climate(p), fallback_climate, |c| c.live).await
     }
 
     async fn fetch_climate(&self, p: Point) -> Result<Climate> {
         let url = format!(
-            "https://power.larc.nasa.gov/api/temporal/climatology/point?parameters=T2M,PRECTOTCORR,RH2M,WS2M,ALLSKY_SFC_SW_DWN&community=AG&longitude={:.4}&latitude={:.4}&format=JSON",
+            "https://power.larc.nasa.gov/api/temporal/climatology/point?parameters=T2M,PRECTOTCORR,RH2M,WS10M,ALLSKY_SFC_SW_DWN&community=AG&longitude={:.4}&latitude={:.4}&format=JSON",
             p.lng, p.lat
         );
         let v = self.get_json(&url).await?;
@@ -243,20 +243,7 @@ impl DataClient {
             (Some(a), Some(b)) => format!("climatologia {a}–{b}"),
             _ => "climatologia 2001–2025".into(),
         };
-        let get = |name: &str, mk: &str| {
-            params[name][mk].as_f64().filter(|x| *x > -900.0).ok_or_else(|| anyhow!("missing {name} {mk}"))
-        };
-        let mut months = Vec::with_capacity(12);
-        for (i, mk) in MONTH_KEYS.iter().enumerate() {
-            months.push(MonthClimate {
-                month: MONTH_LABELS[i].to_string(),
-                precip_mm: round1(get("PRECTOTCORR", mk)? * DAYS_IN_MONTH[i]),
-                temp_c: round1(get("T2M", mk)?),
-                rh_pct: round1(get("RH2M", mk)?),
-                wind_ms: get("WS2M", mk)?,
-                radiation_mj: get("ALLSKY_SFC_SW_DWN", mk)?,
-            });
-        }
+        let months = parse_months(params)?;
         let elevation = v["geometry"]["coordinates"][2].as_f64().unwrap_or(500.0);
         Ok(build_climate(true, period, months, elevation))
     }
@@ -518,7 +505,7 @@ fn build_climate(live: bool, period: String, months: Vec<MonthClimate>, elevatio
     let mean_t = months.iter().map(|m| m.temp_c).sum::<f64>() / 12.0;
     Climate {
         live,
-        source: "NASA POWER · T2M, PRECTOTCORR, RH2M, WS2M, ALLSKY_SFC_SW_DWN".into(),
+        source: "NASA POWER · T2M, PRECTOTCORR, RH2M, WS10M (→ 2 m, FAO-56), ALLSKY_SFC_SW_DWN".into(),
         period,
         months,
         annual_precip_mm: annual.round(),
@@ -543,8 +530,35 @@ pub fn texture_class(l: &SoilLayer) -> String {
     .into()
 }
 
+/// FAO-56 eq. 47 for a 10 m anemometer over short grass: u2 = u10 · 4.87 / ln(67.8·10 − 5.42).
+const WIND_10M_TO_2M: f64 = 0.748;
+
+/// Builds the 12 monthly records from the `properties.parameter` object of a POWER climatology response.
+fn parse_months(params: &serde_json::Value) -> Result<Vec<MonthClimate>> {
+    let get = |name: &str, mk: &str| {
+        params[name][mk].as_f64().filter(|x| *x > -900.0).ok_or_else(|| anyhow!("missing {name} {mk}"))
+    };
+    let mut months = Vec::with_capacity(12);
+    for (i, mk) in MONTH_KEYS.iter().enumerate() {
+        months.push(MonthClimate {
+            month: MONTH_LABELS[i].to_string(),
+            precip_mm: round1(get("PRECTOTCORR", mk)? * DAYS_IN_MONTH[i]),
+            temp_c: round1(get("T2M", mk)?),
+            rh_pct: round1(get("RH2M", mk)?),
+            // POWER's WS2M is near zero in some cells; derive the 2 m wind from WS10M instead.
+            wind_ms: round2(get("WS10M", mk)? * WIND_10M_TO_2M),
+            radiation_mj: get("ALLSKY_SFC_SW_DWN", mk)?,
+        });
+    }
+    Ok(months)
+}
+
 pub fn round1(x: f64) -> f64 {
     (x * 10.0).round() / 10.0
+}
+
+fn round2(x: f64) -> f64 {
+    (x * 100.0).round() / 100.0
 }
 
 // ---------------------------------------------------------------- offline fallbacks
@@ -636,5 +650,36 @@ mod tests {
         let s = [(0.0, 0.0, 100.0), (0.01, 0.0, 110.0), (0.0, 0.01, 100.0), (0.01, 0.01, 110.0)];
         let pct = plane_slope_pct(&s);
         assert!((pct - 0.9).abs() < 0.05, "{pct}");
+    }
+
+    fn power_params(with_ws10m: bool, ws10m: f64) -> serde_json::Value {
+        let mut p = serde_json::Map::new();
+        let mut put = |name: &str, v: f64| {
+            let m: serde_json::Map<String, serde_json::Value> =
+                MONTH_KEYS.iter().map(|k| (k.to_string(), serde_json::json!(v))).collect();
+            p.insert(name.into(), m.into());
+        };
+        put("PRECTOTCORR", 3.0);
+        put("T2M", 24.0);
+        put("RH2M", 70.0);
+        put("ALLSKY_SFC_SW_DWN", 20.0);
+        put("WS2M", 0.1); // must be ignored
+        if with_ws10m {
+            put("WS10M", ws10m);
+        }
+        p.into()
+    }
+
+    #[test]
+    fn wind_is_derived_from_ws10m() {
+        let m = parse_months(&power_params(true, 1.0)).unwrap();
+        assert_eq!(m[0].wind_ms, 0.75);
+        let m = parse_months(&power_params(true, 4.04)).unwrap();
+        assert_eq!(m[5].wind_ms, 3.02);
+    }
+
+    #[test]
+    fn missing_ws10m_is_an_error() {
+        assert!(parse_months(&power_params(false, 0.0)).is_err());
     }
 }

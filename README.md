@@ -55,7 +55,7 @@ The interface is available in **Portuguese and English**. The initial language f
 | Camada Vegetação | MODIS Terra NDVI 16 dias, 250 m (NASA GIBS) | Tiles WMTS |
 | Camada Água | SMAP L4 umidade na zona radicular, ~9 km (NASA GIBS) | Tiles WMTS |
 | Camada Relevo | SRTM Color Index (NASA GIBS) | Tiles WMTS |
-| Clima mensal | NASA POWER climatologia 2001–2025 (`T2M`, `PRECTOTCORR`, `RH2M`, `WS2M`, `ALLSKY_SFC_SW_DWN`) | API REST, no backend |
+| Clima mensal | NASA POWER climatologia 2001–2025 (`T2M`, `PRECTOTCORR`, `RH2M`, `WS10M` convertido a 2 m por FAO-56 eq. 47 (× 0,748), `ALLSKY_SFC_SW_DWN`) | API REST, no backend |
 | Safras secas / típicas / chuvosas | NASA POWER chuva mensal 2000–2025 | API REST, no backend |
 | Produtividade, área e valor da produção | IBGE PAM, tabela 5457 (soja e milho), via SIDRA | API REST, no backend |
 | Município da área | OpenStreetMap Nominatim (reverso) + IBGE Localidades | API REST, no backend |
