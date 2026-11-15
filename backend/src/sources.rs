@@ -402,6 +402,10 @@ impl DataClient {
     // ---------- IBGE SIDRA · PAM (tabela 5457) ----------
 
     pub async fn pam(&self, place: &Place) -> Pam {
+        // A made-up place (offline fallback) must not yield "live" IBGE data.
+        if !place.live {
+            return fallback_pam();
+        }
         let k = place.ibge_code.clone().unwrap_or_else(|| format!("uf-{}", place.uf));
         let pl = place.clone();
         self.cached("pam", &k, || self.fetch_pam(pl), fallback_pam, |p| p.live).await
@@ -747,6 +751,13 @@ mod tests {
         let l = PlaceLookup::OutsideBrazil(ForeignPlace { name: None, region: None, country_code: "us".into() });
         assert!(!place_cacheable(&l));
         assert!(!place_cacheable(&PlaceLookup::Found(fallback_place())));
+    }
+
+    #[tokio::test]
+    async fn pam_for_offline_place_is_offline() {
+        let pam = DataClient::new().pam(&fallback_place()).await;
+        assert!(!pam.live);
+        assert!(pam.source.contains("cópia local"));
     }
 
     #[test]
