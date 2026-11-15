@@ -9,6 +9,7 @@ import { I18nProvider } from './lib/i18n'
 import Landing from './pages/Landing'
 import SelectArea from './pages/SelectArea'
 import DiagnosisPage from './pages/Diagnosis'
+import Rotation from './pages/Rotation'
 import Objectives from './pages/Objectives'
 import Lab from './pages/Lab'
 import Compare from './pages/Compare'
@@ -23,6 +24,7 @@ createRoot(document.getElementById('root')!).render(
           <Route path="/" element={<Landing />} />
           <Route path="/terra" element={<SelectArea />} />
           <Route path="/diagnostico" element={<DiagnosisPage />} />
+          <Route path="/rotacao" element={<Rotation />} />
           <Route path="/objetivos" element={<Objectives />} />
           <Route path="/laboratorio" element={<Lab />} />
           <Route path="/comparar" element={<Compare />} />

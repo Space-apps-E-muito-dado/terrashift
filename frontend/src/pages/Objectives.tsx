@@ -1,18 +1,11 @@
 import { useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
-import { Bean, Check, CircleDashed, Sparkles, Sprout, Wheat } from 'lucide-react'
+import { Check, Sparkles } from 'lucide-react'
 import { AppHeader, Button, Spinner } from '../components/ui'
-import { api, type RecentCrop } from '../lib/api'
-import { OBJECTIVES, farmLabel } from '../lib/meta'
+import { api } from '../lib/api'
+import { OBJECTIVES, farmLabel, simulateRequest } from '../lib/meta'
 import { useI18n } from '../lib/i18n'
 import { useStore } from '../lib/store'
-
-const RECENT: { id: RecentCrop; icon: typeof Bean }[] = [
-  { id: 'soja', icon: Bean },
-  { id: 'milho', icon: Wheat },
-  { id: 'outra', icon: Sprout },
-  { id: 'naosei', icon: CircleDashed },
-]
 
 const ART: Record<string, string> = {
   lucro: 'M0 70 C40 66 70 50 100 44 S160 20 200 6',
@@ -34,7 +27,7 @@ export default function Objectives() {
     setBusy(true)
     setError(undefined)
     try {
-      const sim = await api.simulate(s.farm.polygon, s.objective, s.recentCrop)
+      const sim = await api.simulate(simulateRequest(s))
       set({ simulation: sim, strategyId: sim.recommended, scenario: 'tipico', yearIdx: 1 })
       nav('/laboratorio')
     } catch (e) {
@@ -46,7 +39,7 @@ export default function Objectives() {
 
   return (
     <div className="screen">
-      <AppHeader demo={s.farm.isDemo} farmName={farmLabel(t, s.farm)} page={t('obj.page')} step={2} />
+      <AppHeader demo={s.farm.isDemo} farmName={farmLabel(t, s.farm)} page={t('obj.page')} step={3} />
       <main className="center-col">
         <div className="page-title">
           <h1>{t('obj.title')}</h1>
@@ -77,26 +70,9 @@ export default function Objectives() {
           })}
         </div>
 
-        <div className="card crop-q">
-          <div>
-            <strong>{t('obj.recentQ')}</strong>
-            <p className="muted" style={{ fontSize: 13, marginTop: 4 }}>{t('obj.recentNote')}</p>
-          </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }} role="radiogroup" aria-label={t('obj.recentAria')}>
-            {RECENT.map((r) => {
-              const on = s.recentCrop === r.id
-              return (
-                <button key={r.id} role="radio" aria-checked={on} className={`chip ${on ? 'on' : ''}`} onClick={() => set({ recentCrop: r.id })}>
-                  {on ? <Check size={14} /> : <r.icon size={14} />} {t(`obj.recent.${r.id}`)}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-
         {error && <div className="error-banner">{error}</div>}
         <div className="row-end">
-          <Button variant="ghost" onClick={() => nav('/diagnostico')}>{t('obj.back')}</Button>
+          <Button variant="ghost" onClick={() => nav('/rotacao')}>{t('obj.backRot')}</Button>
           <Button onClick={simulate} disabled={busy} icon={busy ? <Spinner size={16} /> : <Sparkles size={18} color="var(--lime-400)" />} style={{ padding: '16px 24px', fontSize: 16 }}>
             {busy ? t('obj.simulating') : t('obj.simulate')}
           </Button>

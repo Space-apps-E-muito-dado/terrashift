@@ -35,5 +35,6 @@ export function assumptionLines(t: T, sim: Simulation): string[] {
     t('assume.water'),
     t('assume.soil', { slope: fmtDec(c.soil.slopePct), len: c.soil.slopeLengthM }),
     t('assume.season'),
+    ...(sim.customParams.length || [sim.baseline, ...sim.strategies].some((x) => x.sequence.includes('pousio')) ? [t('assume.custom')] : []),
   ]
 }
