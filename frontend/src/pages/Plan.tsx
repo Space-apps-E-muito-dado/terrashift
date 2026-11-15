@@ -1,12 +1,14 @@
 import { Navigate, useNavigate } from 'react-router-dom'
 import { ArrowLeft, ArrowRight, ChevronDown, Coins, Columns3, Download, Layers, MapPin, Microscope, ShieldCheck } from 'lucide-react'
-import { AppHeader, Button, DemoBadge, SourceLabel } from '../components/ui'
+import { AppHeader, Button, DemoBadge, EstTag, SourceLabel } from '../components/ui'
+import { CropThumb } from '../components/CropThumb'
 import type { Simulation, Strategy } from '../lib/api'
+import { isDiagnosisOnly } from '../lib/api'
 import { assumptionLines, sourceLines } from '../lib/explain'
 import { useI18n, type T } from '../lib/i18n'
 import {
-  CROPS,
   SCENARIOS,
+  cropMeta,
   STRATEGY_ICONS,
   brlMil,
   cropName,
@@ -27,11 +29,12 @@ function report(t: T, farm: FarmSel, sim: Simulation, st: Strategy): string {
   const typ = st.scenarios.tipico
   const c = sim.calibration
   const of = t('report.of')
+  const na = t('report.na')
   const lines = [
     `# ${t('report.title', { name: farmLabel(t, farm) })}`,
     '',
     t('report.area', { ha: farm.areaHa, region: regionLabel(t, farm) }),
-    t('report.strategy', { name: strategyName(t, st.id), seq: st.sequence.map((x) => cropName(t, x)).join(' → ') }),
+    t('report.strategy', { name: strategyName(t, st.id), seq: typ.years.map((y) => `${cropName(t, y.crop, y.cropName)}${y.estimated ? ` (${t('common.estimated')})` : ''}`).join(' → ') }),
     '',
     `> ${t('report.disclaimer')}`,
     '',
@@ -41,7 +44,7 @@ function report(t: T, farm: FarmSel, sim: Simulation, st: Strategy): string {
     '|---|---|---|---|---|---|---|',
     ...typ.years.map(
       (y) =>
-        `| ${y.year} | ${cropName(t, y.crop)} | ${y.harvest ? fmtInt(y.yieldKgHa) : '—'} | ${fmtInt(y.revenueBrlHa)} | ${y.etcMm} / ${y.effRainMm} | ${fmtDec(y.soilLossTHa)} | ${y.harvest ? `${y.lossSeasons} ${of} ${y.analogSeasons}` : '—'} |`,
+        `| ${y.year} | ${cropName(t, y.crop, y.cropName)}${y.estimated ? ` (${t('common.estimated')})` : ''} | ${y.yieldKgHa === null ? na : y.harvest ? fmtInt(y.yieldKgHa) : '—'} | ${y.revenueBrlHa === null ? na : fmtInt(y.revenueBrlHa)} | ${y.etcMm} / ${y.effRainMm} | ${fmtDec(y.soilLossTHa)} | ${y.harvest ? `${y.lossSeasons} ${of} ${y.analogSeasons}` : '—'} |`,
     ),
     '',
     `## ${t('report.byScenario')}`,
@@ -50,7 +53,7 @@ function report(t: T, farm: FarmSel, sim: Simulation, st: Strategy): string {
     '|---|---|---|---|---|---|',
     ...SCENARIOS.map((sc) => {
       const v = st.scenarios[sc.id].summary
-      return `| ${scenarioName(t, sc.id)} | ${sim.analogYears[sc.id].map(safra).join(', ')} | ${fmtInt(v.revenueBrlHa)} | ${v.waterSavingIdx} | ${fmtDec(v.soilLossTHa)} | ${v.resilienceIdx} |`
+      return `| ${scenarioName(t, sc.id)} | ${sim.analogYears[sc.id].map(safra).join(', ')} | ${v.revenueBrlHa === null ? na : fmtInt(v.revenueBrlHa)} | ${v.waterSavingIdx} | ${fmtDec(v.soilLossTHa)} | ${v.resilienceIdx} |`
     }),
     '',
     `## ${t('plan.calib', { place: c.yieldPlace, level: t(`plan.level.${c.yieldLevel}` as 'plan.level.município'), source: t('source.ibgeName', { offline: sim.sources[2]?.live === false ? 1 : 0 }) })}`,
@@ -64,6 +67,8 @@ function report(t: T, farm: FarmSel, sim: Simulation, st: Strategy): string {
     '',
     soilCalib(t, sim),
     '',
+    ...customLines(t, sim, st).flatMap((l, i) => (i === 0 ? [`## ${l}`, ''] : [`- ${l}`])),
+    '',
     `## ${t('report.sources')}`,
     '',
     ...sourceLines(t, sim).map((x) => `- ${x.dataset} — ${x.detail}${x.live ? '' : ` (${t('common.offlineExample')})`}`),
@@ -74,6 +79,19 @@ function report(t: T, farm: FarmSel, sim: Simulation, st: Strategy): string {
     '',
   ]
   return lines.join('\n')
+}
+
+/** Title + one line per farmer-defined crop used by the strategy (empty when none). */
+function customLines(t: T, sim: Simulation, st: Strategy): string[] {
+  const used = sim.customParams.filter((c) => st.sequence.includes(c.key))
+  if (!used.length) return []
+  return [
+    t('plan.custom'),
+    ...used.map(
+      (c) =>
+        `${t('plan.customRow', { name: c.name, days: c.cycleDays, month: t(`month.${c.plantingMonth}` as 'month.1'), kc: fmtNum(c.kcMid, 2), ky: c.ky === null ? '—' : fmtNum(c.ky, 2), c: fmtNum(c.cFactor, 2) })} ${t('plan.customSrc', { src: c.source })}`,
+    ),
+  ]
 }
 
 function soilCalib(t: T, sim: Simulation) {
@@ -93,6 +111,7 @@ export default function Plan() {
   const { s } = useStore()
   const { t } = useI18n()
   const sim = s.simulation
+  if (isDiagnosisOnly(s.diagnosis)) return <Navigate to="/diagnostico" replace />
   if (!s.farm || !sim) return <Navigate to={s.farm ? '/objetivos' : '/terra'} replace />
   const st = sim.strategies.find((x) => x.id === (s.strategyId ?? sim.recommended))!
   const typ = st.scenarios.tipico
@@ -126,7 +145,7 @@ export default function Plan() {
           <div className="page-title">
             <h1>{t('plan.title')}</h1>
             <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
-              <span className="chip"><StIcon size={14} color="var(--forest-700)" /> {t('strategy.chip', { name: strategyName(t, st.id).toLowerCase() })}</span>
+              <span className="chip"><StIcon size={14} color="var(--forest-700)" /> {st.id === 'minha' ? strategyName(t, st.id) : t('strategy.chip', { name: strategyName(t, st.id).toLowerCase() })}</span>
               <span className="chip"><MapPin size={14} color="var(--forest-700)" /> {farmName} · {s.farm.areaHa} ha</span>
             </div>
           </div>
@@ -135,12 +154,13 @@ export default function Plan() {
 
         <div className="plan-row">
           {typ.years.flatMap((y, i) => {
-            const C = CROPS[y.crop]
-            const name = cropName(t, y.crop)
+            const C = cropMeta(y.crop)
+            const name = cropName(t, y.crop, y.cropName)
             const el = (
               <article key={y.year} className="plan-step">
-                <img src={C.photo} alt={name} />
+                <CropThumb crop={y.crop} alt={name} className="plan-bg" iconSize={96} />
                 <span className="yr">{y.year}</span>
+                {y.estimated && <span className="plan-est"><EstTag /></span>}
                 <div className="txt">
                   <strong><C.icon size={20} /> {name}</strong>
                   <p>{cropRole(t, y.crop, i > 0 ? typ.years[i - 1].crop : undefined)}</p>
@@ -154,7 +174,11 @@ export default function Plan() {
         <div className="why">
           <div>
             <span className="icon-wrap" style={{ background: 'rgba(36,90,67,.1)', color: 'var(--forest-700)' }}><Coins size={20} /></span>
-            <span><strong>R$ {brlMil(typ.summary.revenueBrlHa)}</strong><small>{t('plan.perHaYear')}</small><p>{t('plan.revenue')}</p></span>
+            {typ.summary.revenueBrlHa === null ? (
+              <span><strong>{t('common.na')}</strong><p>{t('plan.revenueNa')}</p></span>
+            ) : (
+              <span><strong>R$ {brlMil(typ.summary.revenueBrlHa)}</strong><small>{t('plan.perHaYear')}</small><p>{t('plan.revenue')}</p></span>
+            )}
           </div>
           <div>
             <span className="icon-wrap" style={{ background: 'rgba(217,166,94,.2)', color: '#9a6b2c' }}><Layers size={20} /></span>
@@ -168,7 +192,7 @@ export default function Plan() {
             {worstDry ? (
               <span>
                 <strong>{t('lab.riskValue', { n: worstDry.lossSeasons, total: worstDry.analogSeasons })}</strong><small> {t('plan.seasons')}</small>
-                <p>{t('plan.risk', { crop: cropName(t, worstDry.crop).toLowerCase() })}</p>
+                <p>{t('plan.risk', { crop: cropName(t, worstDry.crop, worstDry.cropName).toLowerCase() })}{worstDry.estimated && <> <EstTag /></>}</p>
               </span>
             ) : (
               <span><strong>{t('lab.noHarvest')}</strong><p>{t('plan.noHarvest')}</p></span>
@@ -215,6 +239,15 @@ export default function Plan() {
                 </tbody>
               </table>
               <p className="muted" style={{ marginTop: 8 }}>{soilCalib(t, sim)}</p>
+              {(() => {
+                const lines = customLines(t, sim, st)
+                return lines.length ? (
+                  <div className="custom-params">
+                    <h4>{lines[0]} <EstTag /></h4>
+                    <ul>{lines.slice(1).map((l) => <li key={l}>{l}</li>)}</ul>
+                  </div>
+                ) : null
+              })()}
             </div>
             <div>
               <h4>{t('plan.data')}</h4>

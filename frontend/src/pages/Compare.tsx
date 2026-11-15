@@ -1,14 +1,15 @@
 import { useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { ArrowRight, Check, ChevronsLeftRight, Coins, Droplets, FlaskConical, History, Layers, ShieldCheck, Star, Sun } from 'lucide-react'
-import { AppHeader, Button, DemoBadge, SourceLabel } from '../components/ui'
+import { AppHeader, Button, DemoBadge, EstTag, SourceLabel } from '../components/ui'
 import { FarmMap } from '../components/FarmMap'
 import type { Strategy } from '../lib/api'
-import { CROPS, SCENARIOS, STRATEGY_ICONS, brlMil, cropShort, farmLabel, fmtDec, scenarioName, strategyName, strategyTagline } from '../lib/meta'
+import { isDiagnosisOnly } from '../lib/api'
+import { CROPS, SCENARIOS, STRATEGY_ICONS, brlMil, cropMeta, cropShort, farmLabel, fmtDec, scenarioName, strategyName, strategyTagline } from '../lib/meta'
 import { useI18n } from '../lib/i18n'
 import { useStore } from '../lib/store'
 
-const ORDER = ['retorno', 'equilibrada', 'resiliencia', 'sustentavel']
+const ORDER = ['retorno', 'equilibrada', 'resiliencia', 'sustentavel', 'minha']
 
 /** Always show the aligned and the selected strategy, then fill up to three in a fixed order. */
 function pickThree(all: Strategy[], must: string[]): Strategy[] {
@@ -25,20 +26,22 @@ export default function Compare() {
   const { t } = useI18n()
   const [split, setSplit] = useState(50)
   const sim = s.simulation
+  if (isDiagnosisOnly(s.diagnosis)) return <Navigate to="/diagnostico" replace />
   if (!s.farm || !sim) return <Navigate to={s.farm ? '/objetivos' : '/terra'} replace />
 
   const selected = s.strategyId ?? sim.recommended
-  const cards = pickThree(sim.strategies, [sim.recommended, selected])
+  const hasMine = sim.strategies.some((x) => x.id === 'minha')
+  const cards = pickThree(sim.strategies, [sim.recommended, selected, ...(hasMine ? ['minha'] : [])])
   const sel = sim.strategies.find((x) => x.id === selected)!
   const scen = s.scenario
   const last = sel.scenarios[scen].years[2]
   const baseLast = sim.baseline.scenarios[scen].years[2]
-  const lastCrop = CROPS[last.crop]
+  const lastCrop = cropMeta(last.crop)
 
   const rows = (st: Strategy) => {
     const v = st.scenarios[scen].summary
     return [
-      { k: t('cmp.row.revenue'), icon: Coins, v: v.returnIdx, label: `R$ ${brlMil(v.revenueBrlHa)}`, tip: t('cmp.tip.revenue') },
+      { k: t('cmp.row.revenue'), icon: Coins, v: v.returnIdx ?? 0, label: v.revenueBrlHa === null ? t('common.na') : `R$ ${brlMil(v.revenueBrlHa)}`, tip: v.revenueBrlHa === null ? t('cmp.naNote') : t('cmp.tip.revenue') },
       { k: t('cmp.row.water'), icon: Droplets, v: v.waterSavingIdx, label: `${v.waterSavingIdx}`, tip: t('cmp.tip.water') },
       { k: t('cmp.row.soil'), icon: Layers, v: v.soilIdx, label: `${fmtDec(v.soilLossTHa)} t`, tip: t('cmp.tip.soil') },
       { k: t('cmp.row.climate'), icon: ShieldCheck, v: v.resilienceIdx, label: `${v.resilienceIdx}`, tip: t('cmp.tip.climate') },
@@ -76,15 +79,16 @@ export default function Compare() {
                 <div className="scard-top">
                   <span className="icon-wrap"><Icon size={20} /></span>
                   <strong>{strategyName(t, st.id)}</strong>
+                  {st.estimated && <EstTag dark={aligned} />}
                   {aligned && <span className="aligned-badge"><Star size={11} /> {t('lab.yourGoal')}</span>}
                   <span className="radio">{on && <Check size={14} />}</span>
                 </div>
                 <div className="seq">
                   {st.sequence.map((c, i) => {
-                    const C = CROPS[c]
+                    const C = cropMeta(c)
                     return (
-                      <span key={i} style={{ background: undefined }}>
-                        <C.icon size={13} /> {cropShort(t, c)}
+                      <span key={i} className={C.estimated ? 'est' : ''} title={C.estimated ? t('common.estimatedTitle') : undefined}>
+                        <C.icon size={13} /> {cropShort(t, c, st.scenarios[scen].years[i]?.cropName)}
                       </span>
                     )
                   }).flatMap((el, i) => (i < 2 ? [el, <ArrowRight key={`a${i}`} size={12} className="arrow" />] : [el]))}
@@ -102,6 +106,7 @@ export default function Compare() {
                   ))}
                 </div>
                 <span className="tagline">{strategyTagline(t, st.id)}</span>
+                {st.scenarios[scen].summary.revenueBrlHa === null && <span className="na-note">{t('cmp.naNote')}</span>}
               </button>
             )
           })}
@@ -114,13 +119,13 @@ export default function Compare() {
             <div className="split-line" style={{ left: `${split}%` }} />
             <div className="split-handle" style={{ left: `${split}%` }}><ChevronsLeftRight size={18} /></div>
             <span className="split-tag" style={{ left: 14 }}><Sun size={13} /> {t('cmp.today')}</span>
-            <span className="split-tag" style={{ right: 14 }}><lastCrop.icon size={13} color="var(--lime-400)" /> 2029 · {cropShort(t, last.crop)}</span>
+            <span className="split-tag" style={{ right: 14 }}><lastCrop.icon size={13} color="var(--lime-400)" /> 2029 · {cropShort(t, last.crop, last.cropName)}</span>
             <input className="split-range" type="range" min={5} max={95} value={split} onChange={(e) => setSplit(+e.target.value)} aria-label={t('landing.rangeAria')} />
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14, paddingRight: 12 }}>
             <strong style={{ fontSize: 22, letterSpacing: -0.4, color: 'var(--forest-900)' }}>{t('cmp.twoFutures')}</strong>
             <p className="muted" style={{ fontSize: 15, lineHeight: 1.5 }}>
-              {t('cmp.soilText', { name: strategyName(t, sel.id).toLowerCase(), loss: fmtDec(last.soilLossTHa), base: fmtDec(baseLast.soilLossTHa) })}
+              {t(sel.id === 'minha' ? 'cmp.soilTextMine' : 'cmp.soilText', { name: strategyName(t, sel.id).toLowerCase(), loss: fmtDec(last.soilLossTHa), base: fmtDec(baseLast.soilLossTHa) })}
             </p>
             <span className="note"><FlaskConical size={13} /> {t('cmp.note')}</span>
             <Button className="btn-block" onClick={() => nav('/plano')} icon={<ArrowRight size={18} />}>

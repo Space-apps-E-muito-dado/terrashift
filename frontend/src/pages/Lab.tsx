@@ -16,11 +16,15 @@ import {
   Info,
   Layers,
   Minus,
+  UserRound,
 } from 'lucide-react'
-import { AppHeader, Button, DemoBadge, SourceLabel } from '../components/ui'
+import { AppHeader, Button, DemoBadge, EstTag, SourceLabel } from '../components/ui'
+import { CropThumb } from '../components/CropThumb'
+import { MyRotationDialog } from '../components/MyRotationDialog'
 import { FarmMap } from '../components/FarmMap'
 import type { ScenarioId, YearOutcome } from '../lib/api'
-import { CROPS, SCENARIOS, STRATEGY_ICONS, brlMil, cropName, cropShort, farmLabel, fmtDec, fmtInt, fmtNum, fmtPrice, level, safra, scenarioName, strategyName } from '../lib/meta'
+import { isDiagnosisOnly } from '../lib/api'
+import { SCENARIOS, cropMeta, STRATEGY_ICONS, brlMil, cropName, cropShort, farmLabel, fmtDec, fmtInt, fmtNum, fmtPrice, level, safra, scenarioName, strategyName } from '../lib/meta'
 import { useI18n } from '../lib/i18n'
 import { useStore } from '../lib/store'
 
@@ -80,10 +84,10 @@ function Metric({
       <div className="metric-val">
         <strong>{value}</strong>
         {unit && <span>{unit}</span>}
-        <span className={`delta ${cls}`} title={t('lab.diffCurrent')}>
+        {deltaLabel !== '—' && <span className={`delta ${cls}`} title={t('lab.diffCurrent')}>
           {delta === 0 ? <Minus size={12} /> : delta > 0 ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
           {deltaLabel ?? (delta > 0 ? `+${delta}` : delta)}
-        </span>
+        </span>}
       </div>
       <div className="track" aria-hidden>
         <b style={{ width: `${pct}%`, background: barColor }} />
@@ -106,18 +110,20 @@ export default function Lab() {
   const { t } = useI18n()
   const [flash, setFlash] = useState(false)
   const [pulse, setPulse] = useState(false)
+  const [building, setBuilding] = useState(false)
   const climateRef = useRef<HTMLDivElement>(null)
   const flashTimer = useRef<number>()
   useEffect(() => () => window.clearTimeout(flashTimer.current), [])
 
   const sim = s.simulation
+  if (isDiagnosisOnly(s.diagnosis)) return <Navigate to="/diagnostico" replace />
   if (!s.farm || !sim) return <Navigate to={s.farm ? '/objetivos' : '/terra'} replace />
 
   const strategy = sim.strategies.find((x) => x.id === s.strategyId) ?? sim.strategies[0]
   const scen = strategy.scenarios[s.scenario]
   const y: YearOutcome = scen.years[s.yearIdx]
   const b: YearOutcome = sim.baseline.scenarios[s.scenario].years[s.yearIdx]
-  const crop = CROPS[y.crop]
+  const crop = cropMeta(y.crop)
   const scenMeta = SCENARIOS.find((x) => x.id === s.scenario)!
   const analog = sim.analogYears[s.scenario]
 
@@ -142,10 +148,11 @@ export default function Lab() {
   const risk = level(y.riskIdx, [15, 30], t('lab.level.risk'))
   const scenLabel = scenarioName(t, s.scenario)
   const stratLabel = strategyName(t, strategy.id)
-  const thisCrop = cropName(t, y.crop)
+  const thisCrop = cropName(t, y.crop, y.cropName)
   const lossPct = Math.round((1 - sim.calibration.lossThreshold) * 100)
   const calib = sim.calibration
   const cal = calib.crops.find((c) => c.crop === y.crop)
+  const revDelta = y.revenueBrlHa !== null && b.revenueBrlHa !== null ? y.revenueBrlHa - b.revenueBrlHa : null
 
   return (
     <div className="screen">
@@ -153,7 +160,7 @@ export default function Lab() {
         demo={s.farm.isDemo}
         farmName={farmLabel(t, s.farm)}
         page={t('lab.page')}
-        step={3}
+        step={4}
         action={<Button onClick={() => nav('/comparar')} icon={<Columns3 size={16} />}>{t('lab.compare')}</Button>}
       />
       <div className="lab">
@@ -172,11 +179,16 @@ export default function Lab() {
                 <button key={st.id} className={`strat-opt ${on ? 'on' : ''}`} onClick={() => chooseStrategy(st.id)} aria-pressed={on}>
                   <Icon size={16} />
                   {strategyName(t, st.id)}
+                  {st.estimated && <EstTag />}
                   {on ? <span className="tick"><Check size={11} /></span> : st.id === sim.recommended ? <span className="rec">{t('lab.yourGoal')}</span> : null}
                 </button>
               )
             })}
             {flash && <span className="microtext">{t('lab.applied')}</span>}
+            <button className="strat-opt build" onClick={() => setBuilding(true)}>
+              <UserRound size={16} />
+              {s.myRotation ? t('mine.edit') : t('mine.open')}
+            </button>
           </div>
 
           <div className="sec" ref={climateRef}>
@@ -201,10 +213,11 @@ export default function Lab() {
             <span className="section-label">{t('lab.crops')}</span>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {[...new Set(strategy.sequence)].map((c) => {
-                const C = CROPS[c]
+                const C = cropMeta(c)
                 return (
                   <span key={c} className="chip" style={{ padding: '7px 10px', fontSize: 12 }}>
                     <C.icon size={14} color="var(--forest-700)" /> {cropShort(t, c)}
+                    {C.estimated && <EstTag />}
                   </span>
                 )
               })}
@@ -221,13 +234,14 @@ export default function Lab() {
           <FarmMap className="lab-map" polygon={s.farm.polygon} fill={crop.tint} fillOpacity={0.5}>
             <div className="map-ui" style={{ top: 20, left: 20, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <span className="glass"><scenMeta.icon size={16} /> {t('lab.scenarioChip', { name: scenLabel })}</span>
-              <span className="glass">{(() => { const I = STRATEGY_ICONS[strategy.icon] ?? History; return <I size={16} /> })()} {t('strategy.chip', { name: stratLabel.toLowerCase() })}</span>
+              <span className="glass">{(() => { const I = STRATEGY_ICONS[strategy.icon] ?? History; return <I size={16} /> })()} {strategy.id === 'minha' ? stratLabel : t('strategy.chip', { name: stratLabel.toLowerCase() })}</span>
             </div>
             <div className="year-card" key={`${strategy.id}-${s.yearIdx}`}>
-              <img src={crop.photo} alt="" />
+              <CropThumb crop={y.crop} className="yc-thumb" />
               <div>
                 <small>{t('lab.seasonRain', { year: y.year, mm: fmtInt(y.seasonRainMm) })}</small>
                 <strong>{thisCrop}</strong>
+                {y.estimated && <EstTag />}
               </div>
             </div>
             <div className="map-ui map-caption" style={{ left: 20, bottom: 20 }}>
@@ -247,13 +261,13 @@ export default function Lab() {
               <i className="tl-line" />
               <i className="tl-fill" style={{ width: `${(s.yearIdx / 2) * 66.66}%` }} />
               {scen.years.map((yy, i) => {
-                const C = CROPS[yy.crop]
+                const C = cropMeta(yy.crop)
                 const on = i === s.yearIdx
                 return (
                   <button key={yy.year} className="tl-step" onClick={() => setYear(i)} aria-current={on}>
                     <span className={`tl-node ${on ? 'on' : i < s.yearIdx ? 'done' : ''}`} />
                     <span className={`tl-label ${on ? 'on' : ''}`}>
-                      <C.icon size={14} /> <strong>{yy.year}</strong> {cropName(t, yy.crop)}
+                      <C.icon size={14} /> <strong>{yy.year}</strong> {cropName(t, yy.crop, yy.cropName)}
                     </span>
                   </button>
                 )
@@ -286,11 +300,19 @@ export default function Lab() {
           </div>
           <Metric
             icon={<Coins size={16} />} iconBg="rgba(36,90,67,.1)" iconColor="var(--forest-700)"
-            name={t('lab.revenue')} value={y.harvest ? `R$ ${brlMil(y.revenueBrlHa)}` : 'R$ 0'} unit="/ha"
-            pct={y.returnIdx} base={b.returnIdx} delta={y.revenueBrlHa - b.revenueBrlHa} better="higher" barColor="var(--forest-700)"
-            deltaLabel={`${y.revenueBrlHa - b.revenueBrlHa >= 0 ? '+' : '−'}${brlMil(Math.abs(y.revenueBrlHa - b.revenueBrlHa))}`}
-            caption={y.harvest && cal ? t('lab.revenueCaption', { yield: fmtInt(y.yieldKgHa), price: fmtPrice(cal.priceBrlKg), place: calib.yieldPlace }) : t('lab.revenueNone')}
-            tip={t('lab.revenueTip', { years: cal ? `${cal.firstYear}–${cal.lastYear}` : '' })}
+            name={t('lab.revenue')} value={y.revenueBrlHa === null ? t('common.na') : y.harvest ? `R$ ${brlMil(y.revenueBrlHa)}` : 'R$ 0'} unit={y.revenueBrlHa === null ? undefined : '/ha'}
+            pct={y.returnIdx ?? 0} base={b.returnIdx ?? 0} delta={revDelta ?? 0} better="higher" barColor="var(--forest-700)"
+            deltaLabel={revDelta === null ? '—' : `${revDelta >= 0 ? '+' : '−'}${brlMil(Math.abs(revDelta))}`}
+            caption={
+              y.revenueBrlHa === null
+                ? t('lab.revenueNa')
+                : y.harvest && cal
+                  ? t('lab.revenueCaption', { yield: fmtInt(y.yieldKgHa ?? 0), price: fmtPrice(cal.priceBrlKg), place: calib.yieldPlace })
+                  : y.crop === 'pousio'
+                    ? t('lab.revenueFallow')
+                    : t('lab.revenueNone')
+            }
+            tip={y.revenueBrlHa === null ? t('common.naTitle') : t('lab.revenueTip', { years: cal ? `${cal.firstYear}–${cal.lastYear}` : '' })}
           />
           <Metric
             icon={<Droplets size={16} />} iconBg="rgba(117,185,223,.18)" iconColor="var(--sky-ink)"
@@ -312,11 +334,12 @@ export default function Lab() {
             icon={<CloudLightning size={16} />} iconBg="rgba(232,176,62,.18)" iconColor="#b5852a"
             name={t('lab.risk')} value={y.harvest ? t('lab.riskValue', { n: y.lossSeasons, total: y.analogSeasons }) : t('lab.noHarvest')} unit={y.harvest ? t('lab.riskUnit', { level: risk }) : undefined}
             pct={y.riskIdx} base={b.riskIdx} delta={y.riskIdx - b.riskIdx} better="lower" barColor="var(--alert-amber)"
-            caption={t('lab.riskCaption', { pct: lossPct })}
-            tip={t('lab.riskTip', { years: analog.map(safra).join(', '), pct: lossPct })}
+            caption={y.estimated ? t('lab.riskCaptionKy', { pct: lossPct }) : t('lab.riskCaption', { pct: lossPct })}
+            tip={y.estimated ? t('lab.riskTipKy', { years: analog.map(safra).join(', '), pct: lossPct }) : t('lab.riskTip', { years: analog.map(safra).join(', '), pct: lossPct })}
           />
         </aside>
       </div>
+      {building && <MyRotationDialog onClose={() => setBuilding(false)} onDone={() => setBuilding(false)} />}
     </div>
   )
 }

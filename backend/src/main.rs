@@ -1,3 +1,4 @@
+mod crops;
 mod geo;
 mod model;
 mod pam_fallback;
@@ -20,8 +21,8 @@ use tower_http::{
 };
 
 use geo::{LatLng, Point};
-use model::{AnalogYears, Objective, RecentCrop};
-use sources::{Climate, DataClient, Pam, Place, RainSeries, Soil, Terrain};
+use model::{AnalogYears, Objective};
+use sources::{Climate, DataClient, ForeignPlace, Pam, Place, PlaceLookup, RainSeries, Soil, Terrain};
 
 /// Demo field ("Fazenda Horizonte") in the western Bahia Cerrado, ~120 ha.
 pub const DEMO_POLYGON: [LatLng; 4] = [
@@ -36,16 +37,33 @@ struct AppState {
     data: DataClient,
 }
 
-struct ApiError(StatusCode, String);
+struct ApiError {
+    status: StatusCode,
+    msg: String,
+    /// Stable machine-readable code for the client; `error` stays Portuguese text.
+    code: Option<&'static str>,
+}
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (self.0, Json(json!({ "error": self.1 }))).into_response()
+        let body = match self.code {
+            Some(code) => json!({ "error": self.msg, "code": code }),
+            None => json!({ "error": self.msg }),
+        };
+        (self.status, Json(body)).into_response()
     }
 }
 
 fn bad_request(msg: &str) -> ApiError {
-    ApiError(StatusCode::BAD_REQUEST, msg.to_string())
+    ApiError { status: StatusCode::BAD_REQUEST, msg: msg.to_string(), code: None }
+}
+
+fn outside_coverage() -> ApiError {
+    ApiError {
+        status: StatusCode::UNPROCESSABLE_ENTITY,
+        msg: "A simulação de estratégias cobre apenas o Brasil por enquanto.".into(),
+        code: Some("outside_coverage"),
+    }
 }
 
 #[derive(Serialize)]
@@ -93,50 +111,120 @@ struct CropHistory {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Diagnosis {
+    /// "full" (Brazil) or "diagnosis_only" (outside Brazil: no yields, scenarios or simulation).
+    coverage: &'static str,
     centroid: Point,
     area_ha: f64,
     climate: Climate,
-    rain_series: RainSeries,
-    analog_years: AnalogYears,
+    rain_series: Option<RainSeries>,
+    analog_years: Option<AnalogYears>,
     soil: Soil,
     terrain: Terrain,
-    place: Place,
-    yield_source: String,
-    yield_level: String,
-    yield_place: String,
-    yields_live: bool,
+    place: Option<Place>,
+    foreign_place: Option<ForeignPlace>,
+    yield_source: Option<String>,
+    yield_level: Option<String>,
+    yield_place: Option<String>,
+    yields_live: Option<bool>,
     crops: Vec<CropHistory>,
     sources: Vec<SourceInfo>,
 }
 
-struct Gathered {
-    climate: Climate,
-    rain: RainSeries,
-    soil: Soil,
-    terrain: Terrain,
-    place: Place,
-    pam: Pam,
+/// What the simulation needs and only Brazil has.
+enum Coverage {
+    Full { place: Place, rain: RainSeries, pam: Pam },
+    DiagnosisOnly { foreign: ForeignPlace },
 }
 
+struct Gathered {
+    climate: Climate,
+    soil: Soil,
+    terrain: Terrain,
+    coverage: Coverage,
+}
+
+/// Resolves the place first, so a field outside Brazil skips the Brazil-only sources
+/// (monthly rain series for the Nov–Mar scenarios, IBGE PAM).
 async fn gather(data: &DataClient, poly: &[LatLng]) -> Gathered {
     let c = geo::centroid(poly);
-    let (climate, rain, soil, terrain, place) =
-        tokio::join!(data.climate(c), data.rain_series(c), data.soil(c), data.terrain(poly), data.place(c));
-    let pam = data.pam(&place).await;
-    Gathered { climate, rain, soil, terrain, place, pam }
+    match data.place(c).await {
+        PlaceLookup::Found(place) => {
+            let (climate, rain, soil, terrain) =
+                tokio::join!(data.climate(c), data.rain_series(c), data.soil(c), data.terrain(poly));
+            let pam = data.pam(&place).await;
+            Gathered { climate, soil, terrain, coverage: Coverage::Full { place, rain, pam } }
+        }
+        PlaceLookup::OutsideBrazil(foreign) => {
+            let (climate, soil, terrain) = tokio::join!(data.climate(c), data.soil(c), data.terrain(poly));
+            Gathered { climate, soil, terrain, coverage: Coverage::DiagnosisOnly { foreign } }
+        }
+    }
+}
+
+fn require_full(g: &Gathered) -> Result<(&Place, &RainSeries, &Pam), ApiError> {
+    match &g.coverage {
+        Coverage::Full { place, rain, pam } => Ok((place, rain, pam)),
+        Coverage::DiagnosisOnly { .. } => Err(outside_coverage()),
+    }
 }
 
 fn sources_for(g: &Gathered) -> Vec<SourceInfo> {
-    vec![
-        SourceInfo { kind: "regional", dataset: "NASA POWER".into(), detail: format!("Chuva, temperatura, umidade, vento e radiação · {}", g.climate.period), live: g.climate.live },
-        SourceInfo { kind: "regional", dataset: "NASA POWER".into(), detail: format!("Chuva mensal {}–{} → safras secas, típicas e chuvosas", sources::SERIES_START, sources::SERIES_END), live: g.rain.live },
-        SourceInfo { kind: "regional", dataset: "IBGE PAM".into(), detail: format!("Produtividade, área e valor da produção de soja e milho · {} ({})", g.pam.place, g.pam.level), live: g.pam.live },
+    let mut v = vec![SourceInfo {
+        kind: "regional",
+        dataset: "NASA POWER".into(),
+        detail: format!("Chuva, temperatura, umidade, vento e radiação · {}", g.climate.period),
+        live: g.climate.live,
+    }];
+    if let Coverage::Full { rain, pam, .. } = &g.coverage {
+        v.push(SourceInfo { kind: "regional", dataset: "NASA POWER".into(), detail: format!("Chuva mensal {}–{} → safras secas, típicas e chuvosas", sources::SERIES_START, sources::SERIES_END), live: rain.live });
+        v.push(SourceInfo { kind: "regional", dataset: "IBGE PAM".into(), detail: format!("Produtividade, área e valor da produção de soja e milho · {} ({})", pam.place, pam.level), live: pam.live });
+    }
+    v.extend([
         SourceInfo { kind: "estimate", dataset: "ISRIC SoilGrids".into(), detail: "Textura e carbono orgânico · 250 m".into(), live: g.soil.live },
         SourceInfo { kind: "satellite", dataset: "SRTM".into(), detail: format!("Elevação e declividade ({:.1} %) · 30 m", g.terrain.slope_pct), live: g.terrain.live },
         SourceInfo { kind: "satellite", dataset: "MODIS Terra NDVI".into(), detail: "Camada de vegetação, composição de 16 dias · NASA GIBS".into(), live: true },
         SourceInfo { kind: "satellite", dataset: "SMAP L4".into(), detail: "Umidade do solo na zona radicular · ~9 km · NASA GIBS".into(), live: true },
         SourceInfo { kind: "satellite", dataset: "Copernicus Sentinel-2".into(), detail: "Imagem base sem nuvens (EOX s2cloudless) · 10 m".into(), live: true },
-    ]
+    ]);
+    v
+}
+
+fn build_diagnosis(poly: &[LatLng], g: Gathered) -> Diagnosis {
+    let sources = sources_for(&g);
+    let Gathered { climate, soil, terrain, coverage } = g;
+    let mut d = Diagnosis {
+        coverage: "diagnosis_only",
+        centroid: geo::centroid(poly),
+        area_ha: geo::area_ha(poly).round(),
+        climate,
+        rain_series: None,
+        analog_years: None,
+        soil,
+        terrain,
+        place: None,
+        foreign_place: None,
+        yield_source: None,
+        yield_level: None,
+        yield_place: None,
+        yields_live: None,
+        crops: vec![],
+        sources,
+    };
+    match coverage {
+        Coverage::DiagnosisOnly { foreign } => d.foreign_place = Some(foreign),
+        Coverage::Full { place, rain, pam } => {
+            d.coverage = "full";
+            d.analog_years = Some(model::analog_years(&rain));
+            d.rain_series = Some(rain);
+            d.place = Some(place);
+            d.yield_source = Some(pam.source);
+            d.yield_level = Some(pam.level);
+            d.yield_place = Some(pam.place);
+            d.yields_live = Some(pam.live);
+            d.crops = vec![CropHistory { crop: "soja", years: pam.soja }, CropHistory { crop: "milho", years: pam.milho }];
+        }
+    }
+    d
 }
 
 async fn diagnosis(State(st): State<AppState>, Json(req): Json<PolygonReq>) -> Result<Json<Diagnosis>, ApiError> {
@@ -144,24 +232,7 @@ async fn diagnosis(State(st): State<AppState>, Json(req): Json<PolygonReq>) -> R
         return Err(bad_request("Desenhe uma área com pelo menos 3 pontos."));
     }
     let g = gather(&st.data, &req.polygon).await;
-    let analog = model::analog_years(&g.rain);
-    let sources = sources_for(&g);
-    Ok(Json(Diagnosis {
-        centroid: geo::centroid(&req.polygon),
-        area_ha: geo::area_ha(&req.polygon).round(),
-        sources,
-        analog_years: analog,
-        yield_source: g.pam.source.clone(),
-        yield_level: g.pam.level.clone(),
-        yield_place: g.pam.place.clone(),
-        yields_live: g.pam.live,
-        crops: vec![CropHistory { crop: "soja", years: g.pam.soja }, CropHistory { crop: "milho", years: g.pam.milho }],
-        climate: g.climate,
-        rain_series: g.rain,
-        soil: g.soil,
-        terrain: g.terrain,
-        place: g.place,
-    }))
+    Ok(Json(build_diagnosis(&req.polygon, g)))
 }
 
 #[derive(Deserialize)]
@@ -169,9 +240,18 @@ async fn diagnosis(State(st): State<AppState>, Json(req): Json<PolygonReq>) -> R
 struct SimulateReq {
     polygon: Vec<LatLng>,
     objective: Objective,
-    /// Collected on the "Objetivos" screen; not used by the v0.2 indices.
-    #[allow(dead_code)]
-    recent_crop: RecentCrop,
+    /// The farmer's last three seasons; repeated over 2027–2029 as "Rotação atual".
+    #[serde(default = "default_rotation")]
+    current_rotation: Vec<String>,
+    /// Optional rotation built by the farmer ("Minha rotação").
+    #[serde(default)]
+    my_rotation: Option<Vec<String>>,
+    #[serde(default)]
+    custom_crops: Vec<crops::CustomCropReq>,
+}
+
+fn default_rotation() -> Vec<String> {
+    vec!["soja".into(); 3]
 }
 
 #[derive(Serialize)]
@@ -190,28 +270,35 @@ async fn simulate(State(st): State<AppState>, Json(req): Json<SimulateReq>) -> R
     if !geo::valid_polygon(&req.polygon) {
         return Err(bad_request("Área inválida."));
     }
+    let resolved = crops::resolve(&req.current_rotation, req.my_rotation.as_deref(), &req.custom_crops).map_err(|e| bad_request(&e))?;
     let c = geo::centroid(&req.polygon);
     let g = gather(&st.data, &req.polygon).await;
-    let analog = model::analog_years(&g.rain);
+    let (place, rain, pam) = require_full(&g)?;
+    let analog = model::analog_years(rain);
     let sim = model::simulate(model::SimInput {
         climate: &g.climate,
         analogs: &analog,
         soil: &g.soil,
         terrain: &g.terrain,
-        pam: &g.pam,
+        pam,
+        rain,
         lat: c.lat,
         objective: req.objective,
+        current: resolved.current,
+        mine: resolved.mine,
+        customs: resolved.customs,
     });
-    let any_offline = !(g.climate.live && g.rain.live && g.soil.live && g.terrain.live && g.pam.live);
+    let any_offline = !(g.climate.live && rain.live && g.soil.live && g.terrain.live && pam.live && place.live);
     let pct = (model::LOSS_THRESHOLD * 100.0).round();
     let assumptions = vec![
         format!("Cenários: {}. Cada cenário usa a média mensal de chuva das safras desse terço.", analog.criterion.to_lowercase()),
         format!("Receita bruta = tendência de produtividade de {} (IBGE PAM, até {}) × razão média observada nas safras análogas × preço médio implícito dos 3 anos mais recentes. Custos de produção não incluídos.",
-            g.pam.place, sim.calibration.crops.iter().map(|c| c.last_year).max().unwrap_or(0)),
+            pam.place, sim.calibration.crops.iter().map(|c| c.last_year).max().unwrap_or(0)),
         format!("Risco climático = parcela das safras análogas em que a produtividade ficou {}% ou mais abaixo da tendência.", 100.0 - pct),
         "Água = evapotranspiração da cultura (FAO-56 Penman–Monteith com dados NASA POWER × Kc da FAO para semeadura em novembro) comparada à chuva efetiva (USDA-SCS) do cenário. No índice de folga hídrica, 50 significa chuva efetiva igual à necessidade da cultura.".into(),
         format!("Solo = RUSLE: erosividade R (Lombardi Neto, chuva NASA POWER), erodibilidade K (Williams, SoilGrids), LS com declividade SRTM de {:.1}% e rampa de {} m, fator C de referência para plantio direto (soja 0,20; milho 0,12; cobertura 0,04; palhada reduz o C da cultura seguinte em 30%).", g.terrain.slope_pct, model::SLOPE_LENGTH_M),
         "Uma safra principal por ano (outubro a março); safrinha e irrigação não modeladas. Cobertura vegetal não gera receita direta.".into(),
+        "Culturas descritas por você: Kc pelo tipo (FAO-56, Tabelas 11 e 12), risco pela resposta à água Ky (FAO-33, via FAO-66 Tabela 1) nas safras análogas reais. Sem receita: preço e produtividade desconhecidos. Pousio = solo descoberto (fator C = 1).".into(),
     ];
     Ok(Json(SimulateRes {
         sources: sources_for(&g),
@@ -235,15 +322,19 @@ async fn main() {
         let data = state.data.clone();
         tokio::spawn(async move {
             let g = gather(&data, &DEMO_POLYGON).await;
-            tracing::info!(
-                climate = g.climate.live,
-                rain = g.rain.live,
-                soil = g.soil.live,
-                terrain = g.terrain.live,
-                yields = g.pam.live,
-                place = %g.pam.place,
-                "demo farm data warmed"
-            );
+            match &g.coverage {
+                Coverage::Full { place, rain, pam } => tracing::info!(
+                    climate = g.climate.live,
+                    rain = rain.live,
+                    soil = g.soil.live,
+                    terrain = g.terrain.live,
+                    yields = pam.live,
+                    place = place.live,
+                    yield_place = %pam.place,
+                    "demo farm data warmed"
+                ),
+                Coverage::DiagnosisOnly { .. } => tracing::warn!("demo farm resolved outside Brazil"),
+            }
         });
     }
     let api = Router::new()
@@ -268,4 +359,75 @@ async fn main() {
     tracing::info!("TerraShift API on http://{addr}");
     let listener = tokio::net::TcpListener::bind(addr).await.expect("bind");
     axum::serve(listener, app).await.expect("server");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sources::{fallback_climate, fallback_pam, fallback_place, fallback_rain, fallback_soil, fallback_terrain, ForeignPlace};
+
+    fn outside() -> Gathered {
+        Gathered {
+            climate: fallback_climate(),
+            soil: fallback_soil(),
+            terrain: fallback_terrain(),
+            coverage: Coverage::DiagnosisOnly {
+                foreign: ForeignPlace { name: Some("Worth Township".into()), region: Some("Iowa".into()), country_code: "us".into() },
+            },
+        }
+    }
+
+    fn brazil() -> Gathered {
+        Gathered {
+            climate: fallback_climate(),
+            soil: fallback_soil(),
+            terrain: fallback_terrain(),
+            coverage: Coverage::Full { place: fallback_place(), rain: fallback_rain(), pam: fallback_pam() },
+        }
+    }
+
+    async fn body(res: Response) -> serde_json::Value {
+        serde_json::from_slice(&axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn outside_coverage_is_422_with_code() {
+        let res = outside_coverage().into_response();
+        assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let b = body(res).await;
+        assert_eq!(b["code"], "outside_coverage");
+        assert!(b["error"].as_str().unwrap().contains("Brasil"));
+    }
+
+    #[tokio::test]
+    async fn bad_request_has_no_code() {
+        let b = body(bad_request("x").into_response()).await;
+        assert!(b.get("code").is_none());
+    }
+
+    #[test]
+    fn simulate_refuses_diagnosis_only() {
+        assert!(require_full(&outside()).is_err());
+        assert!(require_full(&brazil()).is_ok());
+    }
+
+    #[test]
+    fn sources_outside_brazil_have_no_ibge_or_rain_series() {
+        let s = sources_for(&outside());
+        assert_eq!(s.len(), 6);
+        assert!(s.iter().all(|x| x.dataset != "IBGE PAM" && !x.detail.starts_with("Chuva mensal")));
+        assert_eq!(sources_for(&brazil()).len(), 8);
+    }
+
+    #[test]
+    fn diagnosis_only_serializes_nulls() {
+        let v = serde_json::to_value(build_diagnosis(&DEMO_POLYGON, outside())).unwrap();
+        assert_eq!(v["coverage"], "diagnosis_only");
+        assert!(v["place"].is_null() && v["analogYears"].is_null() && v["rainSeries"].is_null() && v["yieldsLive"].is_null());
+        assert_eq!(v["crops"], serde_json::json!([]));
+        assert_eq!(v["foreignPlace"]["countryCode"], "us");
+        let f = serde_json::to_value(build_diagnosis(&DEMO_POLYGON, brazil())).unwrap();
+        assert_eq!(f["coverage"], "full");
+        assert_eq!(f["yieldsLive"], false); // fallback place → offline yields
+    }
 }

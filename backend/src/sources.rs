@@ -132,6 +132,25 @@ pub struct Place {
     pub ibge_code: Option<String>,
 }
 
+/// A place outside Brazil, as named by the reverse geocoder.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ForeignPlace {
+    pub name: Option<String>,
+    pub region: Option<String>,
+    /// Lower-case ISO 3166-1 alpha-2, e.g. "us".
+    pub country_code: String,
+}
+
+/// Outcome of a place lookup. "Outside Brazil" is an answer, not an error.
+/// Untagged with `Found` first, so cache files holding a bare `Place` still read.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum PlaceLookup {
+    Found(Place),
+    OutsideBrazil(ForeignPlace),
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PamYear {
@@ -356,24 +375,20 @@ impl DataClient {
 
     // ---------- Municipality (Nominatim reverse + IBGE Localidades) ----------
 
-    pub async fn place(&self, p: Point) -> Place {
-        self.cached("place", &key(p), || self.fetch_place(p), fallback_place, |x| x.live && x.ibge_code.is_some())
-            .await
+    pub async fn place(&self, p: Point) -> PlaceLookup {
+        self.cached("place", &key(p), || self.fetch_place(p), fallback_lookup, place_cacheable).await
     }
 
-    async fn fetch_place(&self, p: Point) -> Result<Place> {
+    async fn fetch_place(&self, p: Point) -> Result<PlaceLookup> {
         let url = format!(
             "https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat={:.5}&lon={:.5}&zoom=10&accept-language=pt-BR",
             p.lat, p.lng
         );
         let v = self.get_json(&url).await?;
-        let a = &v["address"];
-        let name = ["municipality", "city", "town", "village"]
-            .iter()
-            .find_map(|k| a[*k].as_str())
-            .context("no municipality in reverse geocode")?
-            .to_string();
-        let uf = a["ISO3166-2-lvl4"].as_str().and_then(|s| s.strip_prefix("BR-")).context("not in Brazil")?.to_string();
+        let (name, uf) = match parse_reverse(&v)? {
+            Reverse::Outside(f) => return Ok(PlaceLookup::OutsideBrazil(f)),
+            Reverse::Brazil { name, uf } => (name, uf),
+        };
         let list = self.get_json(&format!("https://servicodados.ibge.gov.br/api/v1/localidades/estados/{uf}/municipios")).await?;
         let target = normalize(&name);
         let code = list
@@ -381,12 +396,16 @@ impl DataClient {
             .and_then(|ms| ms.iter().find(|m| m["nome"].as_str().map(normalize).as_deref() == Some(target.as_str())))
             .and_then(|m| m["id"].as_i64())
             .map(|id| id.to_string());
-        Ok(Place { live: true, municipality: name, uf, ibge_code: code })
+        Ok(PlaceLookup::Found(Place { live: true, municipality: name, uf, ibge_code: code }))
     }
 
     // ---------- IBGE SIDRA · PAM (tabela 5457) ----------
 
     pub async fn pam(&self, place: &Place) -> Pam {
+        // A made-up place (offline fallback) must not yield "live" IBGE data.
+        if !place.live {
+            return fallback_pam();
+        }
         let k = place.ibge_code.clone().unwrap_or_else(|| format!("uf-{}", place.uf));
         let pl = place.clone();
         self.cached("pam", &k, || self.fetch_pam(pl), fallback_pam, |p| p.live).await
@@ -456,6 +475,40 @@ impl DataClient {
 }
 
 // ---------------------------------------------------------------- helpers
+
+/// What a Nominatim reverse geocode says about a point.
+enum Reverse {
+    Brazil { name: String, uf: String },
+    Outside(ForeignPlace),
+}
+
+/// Reads a Nominatim `reverse?format=jsonv2` body. An error means "no usable answer"
+/// (no country, or a Brazilian point without municipality/state): the caller falls back.
+fn parse_reverse(v: &Value) -> Result<Reverse> {
+    let a = &v["address"];
+    let first = |keys: &[&str]| keys.iter().find_map(|k| a[*k].as_str()).map(str::to_string);
+    let country = a["country_code"].as_str().context("no country in reverse geocode")?.to_ascii_lowercase();
+    if country != "br" {
+        return Ok(Reverse::Outside(ForeignPlace {
+            name: first(&["municipality", "city", "town", "village", "county"]),
+            region: first(&["state"]),
+            country_code: country,
+        }));
+    }
+    let name = first(&["municipality", "city", "town", "village"]).context("no municipality in reverse geocode")?;
+    let uf = a["ISO3166-2-lvl4"].as_str().and_then(|s| s.strip_prefix("BR-")).context("no Brazilian state in reverse geocode")?;
+    Ok(Reverse::Brazil { name, uf: uf.to_string() })
+}
+
+/// Only resolved Brazilian places are cached. "Outside Brazil" is never cached: the cache
+/// key is a ~1 km cell, and a cell on the border must not refuse Brazilian fields for good.
+fn place_cacheable(l: &PlaceLookup) -> bool {
+    matches!(l, PlaceLookup::Found(p) if p.live && p.ibge_code.is_some())
+}
+
+fn fallback_lookup() -> PlaceLookup {
+    PlaceLookup::Found(fallback_place())
+}
 
 fn normalize(s: &str) -> String {
     s.chars()
@@ -564,7 +617,7 @@ fn round2(x: f64) -> f64 {
 // ---------------------------------------------------------------- offline fallbacks
 // Approximate values for the demo field (western Bahia). Never cached; flagged live=false.
 
-fn fallback_climate() -> Climate {
+pub(crate) fn fallback_climate() -> Climate {
     let pr = [205.0, 165.0, 160.0, 75.0, 12.0, 2.0, 1.0, 3.0, 20.0, 85.0, 175.0, 210.0];
     let t = [24.6, 24.7, 24.6, 24.5, 23.8, 22.9, 22.8, 24.4, 26.4, 26.6, 25.0, 24.6];
     let rh = [73.0, 74.0, 74.0, 68.0, 57.0, 50.0, 47.0, 40.0, 40.0, 52.0, 68.0, 73.0];
@@ -585,7 +638,7 @@ fn fallback_climate() -> Climate {
     c
 }
 
-fn fallback_rain() -> RainSeries {
+pub(crate) fn fallback_rain() -> RainSeries {
     // Climatological monthly shape scaled by an illustrative yearly factor.
     let shape = [205.0, 165.0, 160.0, 75.0, 12.0, 2.0, 1.0, 3.0, 20.0, 85.0, 175.0, 210.0];
     let f = [
@@ -602,7 +655,7 @@ fn fallback_rain() -> RainSeries {
     RainSeries { live: false, source: "Exemplo offline (NASA POWER indisponível)".into(), years }
 }
 
-fn fallback_soil() -> Soil {
+pub(crate) fn fallback_soil() -> Soil {
     let layers = vec![
         SoilLayer { depth: "0–5 cm".into(), clay_pct: 30.0, sand_pct: 49.0, silt_pct: 21.0 },
         SoilLayer { depth: "15–30 cm".into(), clay_pct: 32.0, sand_pct: 47.0, silt_pct: 21.0 },
@@ -612,15 +665,15 @@ fn fallback_soil() -> Soil {
     Soil { live: false, source: "Exemplo offline (SoilGrids indisponível)".into(), layers, soc_g_kg: Some(12.0), texture_class: texture }
 }
 
-fn fallback_terrain() -> Terrain {
+pub(crate) fn fallback_terrain() -> Terrain {
     Terrain { live: false, source: "Exemplo offline (SRTM indisponível)".into(), elevation_m: 790.0, slope_pct: 1.0, samples: 0 }
 }
 
-fn fallback_place() -> Place {
+pub(crate) fn fallback_place() -> Place {
     Place { live: false, municipality: "Luís Eduardo Magalhães".into(), uf: "BA".into(), ibge_code: Some("2919553".into()) }
 }
 
-fn fallback_pam() -> Pam {
+pub(crate) fn fallback_pam() -> Pam {
     let conv = |rows: &[(i32, f64, f64, f64)]| {
         rows.iter().map(|&(year, y, a, v)| PamYear { year, yield_kg_ha: y, area_ha: a, value_thousand_brl: v }).collect()
     };
@@ -637,6 +690,75 @@ fn fallback_pam() -> Pam {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn reverse_us_is_outside_brazil() {
+        let v = json!({"address": {"municipality": "Worth Township", "county": "Boone County", "state": "Iowa",
+            "ISO3166-2-lvl4": "US-IA", "country": "Estados Unidos da América", "country_code": "us"}});
+        match parse_reverse(&v).unwrap() {
+            Reverse::Outside(f) => assert_eq!(
+                f,
+                ForeignPlace { name: Some("Worth Township".into()), region: Some("Iowa".into()), country_code: "us".into() }
+            ),
+            _ => panic!("expected Outside"),
+        }
+    }
+
+    #[test]
+    fn reverse_br_gives_name_and_uf() {
+        let v = json!({"address": {"municipality": "Londrina", "state": "Paraná", "ISO3166-2-lvl4": "BR-PR", "country": "Brasil", "country_code": "br"}});
+        match parse_reverse(&v).unwrap() {
+            Reverse::Brazil { name, uf } => {
+                assert_eq!(name, "Londrina");
+                assert_eq!(uf, "PR");
+            }
+            _ => panic!("expected Brazil"),
+        }
+    }
+
+    #[test]
+    fn reverse_upper_case_codes() {
+        let br = json!({"address": {"town": "X", "ISO3166-2-lvl4": "BR-BA", "country_code": "BR"}});
+        assert!(matches!(parse_reverse(&br).unwrap(), Reverse::Brazil { .. }));
+        let us = json!({"address": {"country_code": "US"}});
+        assert!(matches!(parse_reverse(&us).unwrap(), Reverse::Outside(ForeignPlace { ref country_code, .. }) if country_code == "us"));
+    }
+
+    #[test]
+    fn reverse_country_only_has_no_name() {
+        let v = json!({"address": {"country": "Argentina", "country_code": "ar"}});
+        assert!(matches!(parse_reverse(&v).unwrap(), Reverse::Outside(ForeignPlace { name: None, region: None, .. })));
+    }
+
+    #[test]
+    fn reverse_unknown_is_an_error() {
+        assert!(parse_reverse(&json!({"error": "Unable to geocode"})).is_err());
+        // Brazil without a municipality: failed lookup (fallback), never "outside".
+        assert!(parse_reverse(&json!({"address": {"state": "Bahia", "ISO3166-2-lvl4": "BR-BA", "country_code": "br"}})).is_err());
+    }
+
+    #[test]
+    fn legacy_place_cache_still_reads() {
+        let s = r#"{"live":true,"municipality":"Luís Eduardo Magalhães","uf":"BA","ibgeCode":"2919553"}"#;
+        let l: PlaceLookup = serde_json::from_str(s).unwrap();
+        assert!(matches!(l, PlaceLookup::Found(ref p) if p.uf == "BA"));
+        assert!(place_cacheable(&l));
+    }
+
+    #[test]
+    fn outside_brazil_is_not_cached() {
+        let l = PlaceLookup::OutsideBrazil(ForeignPlace { name: None, region: None, country_code: "us".into() });
+        assert!(!place_cacheable(&l));
+        assert!(!place_cacheable(&PlaceLookup::Found(fallback_place())));
+    }
+
+    #[tokio::test]
+    async fn pam_for_offline_place_is_offline() {
+        let pam = DataClient::new().pam(&fallback_place()).await;
+        assert!(!pam.live);
+        assert!(pam.source.contains("cópia local"));
+    }
 
     #[test]
     fn normalizes_portuguese_names() {

@@ -1,9 +1,11 @@
 import { useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { ArrowRight, CloudRain, Droplets, Eye, Image, Layers, Leaf, Mountain, Sparkles, Thermometer } from 'lucide-react'
-import { AppHeader, Button, SourceLabel } from '../components/ui'
+import { AppHeader, Button, DemoBadge, SourceLabel } from '../components/ui'
 import { FarmMap, OVERLAYS, type MapLayer } from '../components/FarmMap'
-import { useI18n } from '../lib/i18n'
+import { isDiagnosisOnly, type Diagnosis } from '../lib/api'
+import { countryName } from '../lib/geo'
+import { useI18n, type Lang } from '../lib/i18n'
 import { farmLabel, fmtInt, fmtOne } from '../lib/meta'
 import { useStore } from '../lib/store'
 
@@ -17,13 +19,24 @@ const LAYERS: { id: MapLayer; icon: typeof Image }[] = [
 
 const SOIL_COLORS = ['#C98F45', '#D9A65E', '#E9CB98']
 
+/** "Luís Eduardo Magalhães (BA)" in Brazil; "Worth Township, Iowa · United States" elsewhere. */
+function placeLabel(d: Diagnosis, lang: Lang): string {
+  if (d.place) return `${d.place.municipality} (${d.place.uf})`
+  const f = d.foreignPlace
+  if (!f) return ''
+  const local = [f.name, f.region].filter(Boolean).join(', ')
+  const country = countryName(f.countryCode, lang)
+  return local ? `${local} · ${country}` : country
+}
+
 export default function DiagnosisPage() {
   const nav = useNavigate()
   const { s } = useStore()
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const [layer, setLayer] = useState<MapLayer>('real')
   const d = s.diagnosis
   if (!s.farm || !d) return <Navigate to="/terra" replace />
+  const only = isDiagnosisOnly(d)
 
   const monthsShort = t('months.short').split(',')
   const monthsLong = t('months.long').split(',')
@@ -48,12 +61,13 @@ export default function DiagnosisPage() {
         farmName={farmLabel(t, s.farm)}
         page={t('diag.page')}
         step={1}
-        action={<Button onClick={() => nav('/objetivos')} icon={<ArrowRight size={16} />}>{t('common.continue')}</Button>}
+        action={only ? undefined : <Button onClick={() => nav('/rotacao')} icon={<ArrowRight size={16} />}>{t('common.continue')}</Button>}
       />
       <main className="page fit">
         <div className="page-title">
           <span className="eyebrow">
-            {farmLabel(t, s.farm)} · {d.areaHa} ha · {d.place.municipality} ({d.place.uf})
+            {farmLabel(t, s.farm)} · {d.areaHa} ha · {placeLabel(d, lang)}
+            {d.place && !d.place.live && <> <DemoBadge label={t('common.offlineExample')} /></>}
           </span>
           <h1>{t('diag.title')}</h1>
           <p>{t('diag.lead')}</p>
@@ -146,16 +160,26 @@ export default function DiagnosisPage() {
               </section>
             </div>
 
-            <div className="insight">
-              <span className="eyebrow"><Sparkles size={16} /> {t('diag.next')}</span>
-              <p>{t('diag.insight')}</p>
-              <span style={{ fontSize: 12.5, color: 'rgba(255,255,255,.72)', lineHeight: 1.45 }}>
-                {t('diag.insightNote', { n: d.analogYears.seasons.length, place: d.yieldPlace })}
-              </span>
-              <Button variant="accent" onClick={() => nav('/objetivos')} icon={<ArrowRight size={18} />} style={{ alignSelf: 'flex-start' }}>
-                {t('diag.explore')}
-              </Button>
-            </div>
+            {only || !d.analogYears ? (
+              <div className="insight">
+                <span className="eyebrow"><Sparkles size={16} /> {t('diag.coverageTitle')}</span>
+                <p>{t('diag.coverageBody')}</p>
+                <Button variant="accent" onClick={() => nav('/terra')} icon={<ArrowRight size={18} />} style={{ alignSelf: 'flex-start' }}>
+                  {t('diag.coverageAction')}
+                </Button>
+              </div>
+            ) : (
+              <div className="insight">
+                <span className="eyebrow"><Sparkles size={16} /> {t('diag.next')}</span>
+                <p>{t('diag.insight')}</p>
+                <span style={{ fontSize: 12.5, color: 'rgba(255,255,255,.72)', lineHeight: 1.45 }}>
+                  {t('diag.insightNote', { n: d.analogYears.seasons.length, place: d.yieldPlace ?? '' })}
+                </span>
+                <Button variant="accent" onClick={() => nav('/rotacao')} icon={<ArrowRight size={18} />} style={{ alignSelf: 'flex-start' }}>
+                  {t('diag.explore')}
+                </Button>
+              </div>
+            )}
           </div>
         </div>
       </main>

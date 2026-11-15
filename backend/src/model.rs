@@ -13,6 +13,8 @@
 
 use serde::{Deserialize, Serialize};
 
+pub use crate::crops::CropId;
+use crate::crops::{self, CropSpec, CustomParams};
 use crate::sources::{Climate, Pam, PamYear, RainSeries, Soil, Terrain, DAYS_IN_MONTH};
 
 pub const PLAN_YEARS: [i32; 3] = [2027, 2028, 2029];
@@ -20,45 +22,6 @@ pub const PLAN_YEARS: [i32; 3] = [2027, 2028, 2029];
 pub const LOSS_THRESHOLD: f64 = 0.85;
 /// Assumed slope length for the LS factor (m).
 pub const SLOPE_LENGTH_M: f64 = 100.0;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum CropId {
-    Soja,
-    Milho,
-    Cobertura,
-}
-
-struct CropParams {
-    name: &'static str,
-    /// Crop coefficient per calendar month (Jan..Dec), FAO-56 Table 12 stages for a November sowing.
-    kc: [f64; 12],
-    /// RUSLE cover-management factor under no-till (typical Brazilian literature values).
-    c_factor: f64,
-}
-
-fn params(c: CropId) -> CropParams {
-    match c {
-        // ~120 days, Nov → Feb
-        CropId::Soja => CropParams {
-            name: "Soja",
-            kc: [1.15, 0.75, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.9],
-            c_factor: 0.20,
-        },
-        // ~140 days, Nov → Mar
-        CropId::Milho => CropParams {
-            name: "Milho",
-            kc: [1.2, 1.1, 0.6, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.4, 0.8],
-            c_factor: 0.12,
-        },
-        // Millet / brachiaria cover, ~110 days, Nov → Feb
-        CropId::Cobertura => CropParams {
-            name: "Cobertura vegetal",
-            kc: [1.0, 0.6, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.4, 0.8],
-            c_factor: 0.04,
-        },
-    }
-}
 
 /// Straw from a cover crop lowers the C factor of the next crop.
 const COVER_RESIDUE_C_MULT: f64 = 0.7;
@@ -70,15 +33,6 @@ pub enum Objective {
     Solo,
     Seguranca,
     Equilibrio,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum RecentCrop {
-    Soja,
-    Milho,
-    Outra,
-    Naosei,
 }
 
 // ---------------------------------------------------------------- scenarios
@@ -328,19 +282,20 @@ fn calibrate(crop: CropId, rows: &[PamYear], a: &AnalogYears) -> Option<CropCali
 #[serde(rename_all = "camelCase")]
 pub struct YearOutcome {
     pub year: i32,
-    pub crop: CropId,
-    pub crop_name: &'static str,
+    /// Crop key: built-in id ("soja", …) or a farmer-defined id ("custom-1").
+    pub crop: String,
+    pub crop_name: String,
     pub season_rain_mm: f64,
-    /// 0–100 indices used by the bars.
-    pub return_idx: f64,
+    /// 0–100 indices used by the bars. `None` = not available (custom crops have no price or yield).
+    pub return_idx: Option<f64>,
     pub water_demand_idx: f64,
     /// Water balance: 50 when effective rain equals crop ETc, 100 with ≥50 % surplus, 0 with ≥50 % deficit.
     pub water_balance_idx: f64,
     pub soil_idx: f64,
     pub risk_idx: f64,
     /// Physical values behind the indices.
-    pub revenue_brl_ha: f64,
-    pub yield_kg_ha: f64,
+    pub revenue_brl_ha: Option<f64>,
+    pub yield_kg_ha: Option<f64>,
     pub etc_mm: f64,
     pub eff_rain_mm: f64,
     pub deficit_mm: f64,
@@ -348,16 +303,19 @@ pub struct YearOutcome {
     pub loss_seasons: usize,
     pub analog_seasons: usize,
     pub harvest: bool,
+    /// Parameters estimated from the farmer's description.
+    pub estimated: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Summary {
-    pub return_idx: f64,
+    /// `None` when any season of the rotation has no revenue estimate.
+    pub return_idx: Option<f64>,
     pub water_saving_idx: f64,
     pub soil_idx: f64,
     pub resilience_idx: f64,
-    pub revenue_brl_ha: f64,
+    pub revenue_brl_ha: Option<f64>,
     pub soil_loss_t_ha: f64,
     pub deficit_mm: f64,
 }
@@ -380,11 +338,13 @@ pub struct ScenarioSet {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Strategy {
-    pub id: &'static str,
-    pub name: &'static str,
-    pub icon: &'static str,
-    pub sequence: Vec<CropId>,
-    pub tagline: &'static str,
+    pub id: String,
+    pub name: String,
+    pub icon: String,
+    pub sequence: Vec<String>,
+    pub tagline: String,
+    /// Contains at least one farmer-defined crop.
+    pub estimated: bool,
     pub scenarios: ScenarioSet,
 }
 
@@ -428,8 +388,14 @@ pub struct SimInput<'a> {
     pub soil: &'a Soil,
     pub terrain: &'a Terrain,
     pub pam: &'a Pam,
+    pub rain: &'a RainSeries,
     pub lat: f64,
     pub objective: Objective,
+    /// The farmer's declared rotation, repeated over the plan years.
+    pub current: Vec<CropSpec>,
+    /// The rotation the farmer built ("Minha rotação"), if any.
+    pub mine: Option<Vec<CropSpec>>,
+    pub customs: Vec<CustomParams>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -439,9 +405,13 @@ pub struct SimOutput {
     pub strategies: Vec<Strategy>,
     pub recommended: &'static str,
     pub calibration: Calibration,
+    /// Derived parameters of the farmer-defined crops, with sources.
+    pub custom_params: Vec<CustomParams>,
 }
 
 struct Ctx<'a> {
+    rain: &'a RainSeries,
+    analogs: &'a AnalogYears,
     et0: [f64; 12],
     k: f64,
     ls: f64,
@@ -461,77 +431,115 @@ fn r0(x: f64) -> f64 {
     x.round()
 }
 
-fn run(seq: &[CropId], scen: Scen, profile: &ScenarioProfile, ctx: &Ctx) -> ScenarioResult {
+/// FAO-33 yield response over the real analog seasons: share of seasons in which the relative
+/// yield 1 − Ky·(1 − ETa/ETc) falls below `LOSS_THRESHOLD`. ETa = min(ETc, effective rain) month by
+/// month, with no soil-water carry-over (conservative).
+fn ky_risk(crop: &CropSpec, ky: f64, scen: Scen, ctx: &Ctx) -> (usize, usize) {
+    let years = match scen {
+        Scen::Seco => &ctx.analogs.seco,
+        Scen::Tipico => &ctx.analogs.tipico,
+        Scen::Chuvoso => &ctx.analogs.chuvoso,
+    };
+    let (mut loss, mut n) = (0, 0);
+    for &y in years {
+        let Some(months) = season_months(ctx.rain, y) else { continue };
+        let (mut etc, mut eta) = (0.0, 0.0);
+        for m in 0..12 {
+            let need = crop.kc[m] * ctx.et0[m] * DAYS_IN_MONTH[m];
+            etc += need;
+            eta += need.min(effective_rain(months[m]) * crop.cover[m]);
+        }
+        if etc <= 0.0 {
+            continue;
+        }
+        n += 1;
+        if 1.0 - ky * (1.0 - eta / etc) < LOSS_THRESHOLD {
+            loss += 1;
+        }
+    }
+    (loss, n)
+}
+
+fn run(seq: &[CropSpec], scen: Scen, profile: &ScenarioProfile, ctx: &Ctx) -> ScenarioResult {
     let r_factor = erosivity(&profile.months);
-    let mut prev: Option<CropId> = None;
+    let mut prev: Option<&CropSpec> = None;
     let mut years = Vec::new();
-    for (i, &crop) in seq.iter().enumerate() {
-        let p = params(crop);
+    for (i, crop) in seq.iter().enumerate() {
         // Water balance over the crop months.
         let (mut etc, mut pe) = (0.0, 0.0);
         for m in 0..12 {
-            if p.kc[m] > 0.0 {
-                etc += p.kc[m] * ctx.et0[m] * DAYS_IN_MONTH[m];
-                pe += effective_rain(profile.months[m]);
-            }
+            etc += crop.kc[m] * ctx.et0[m] * DAYS_IN_MONTH[m];
+            pe += effective_rain(profile.months[m]) * crop.cover[m];
         }
         let deficit = (etc - pe).max(0.0);
-        // Revenue and risk from the municipal yield history.
-        let cal = match crop {
-            CropId::Soja => ctx.soja,
-            CropId::Milho => ctx.milho,
-            CropId::Cobertura => None,
+        // Revenue and risk: municipal yield history for soybean and maize; FAO-33 Ky for custom crops.
+        let cal = match crop.builtin {
+            Some(CropId::Soja) => ctx.soja,
+            Some(CropId::Milho) => ctx.milho,
+            _ => None,
         };
-        let (yield_kg, revenue, loss, n) = match cal {
-            Some(c) => {
+        let (yield_kg, revenue, loss, n) = match (cal, crop.estimated) {
+            (Some(c), _) => {
                 let s = match scen {
                     Scen::Seco => &c.seco,
                     Scen::Tipico => &c.tipico,
                     Scen::Chuvoso => &c.chuvoso,
                 };
                 let y = c.trend_yield_kg_ha * s.ratio;
-                (y, y * c.price_brl_kg, s.loss_seasons, s.seasons)
+                (Some(y), Some(y * c.price_brl_kg), s.loss_seasons, s.seasons)
             }
-            None => (0.0, 0.0, 0, 0),
+            (None, true) => {
+                let (loss, n) = match (crop.harvest, crop.ky) {
+                    (true, Some(ky)) => ky_risk(crop, ky, scen, ctx),
+                    _ => (0, 0),
+                };
+                (None, None, loss, n)
+            }
+            (None, false) => (Some(0.0), Some(0.0), 0, 0),
         };
         let risk = if n > 0 { 100.0 * loss as f64 / n as f64 } else { 0.0 };
-        // Soil loss (RUSLE) with residue carry-over from a previous cover crop.
-        let c_eff = if prev == Some(CropId::Cobertura) && crop != CropId::Cobertura {
-            p.c_factor * COVER_RESIDUE_C_MULT
+        // Soil loss (RUSLE) with residue carry-over from a previous straw-leaving crop.
+        let c_eff = if prev.is_some_and(|p| p.leaves_straw) && !crop.leaves_straw {
+            crop.c_factor * COVER_RESIDUE_C_MULT
         } else {
-            p.c_factor
+            crop.c_factor
         };
         let loss_t = r_factor * ctx.k * ctx.ls * c_eff;
         years.push(YearOutcome {
             year: PLAN_YEARS[i],
-            crop,
-            crop_name: p.name,
+            crop: crop.key.clone(),
+            crop_name: crop.name.clone(),
             season_rain_mm: profile.oct_mar_mm,
-            return_idx: r0((100.0 * revenue / ctx.revenue_ref).clamp(0.0, 100.0)),
+            return_idx: revenue.map(|r| r0((100.0 * r / ctx.revenue_ref).clamp(0.0, 100.0))),
             water_demand_idx: r0((100.0 * etc / pe.max(1.0)).clamp(0.0, 100.0)),
-            water_balance_idx: r0((50.0 + 100.0 * (pe - etc) / etc.max(1.0)).clamp(0.0, 100.0)),
-            soil_idx: r0(100.0 * (1.0 - c_eff)),
+            water_balance_idx: if etc > 0.0 { r0((50.0 + 100.0 * (pe - etc) / etc).clamp(0.0, 100.0)) } else { 100.0 },
+            soil_idx: r0((100.0 * (1.0 - c_eff)).max(0.0)),
             risk_idx: r0(risk),
-            revenue_brl_ha: (revenue / 10.0).round() * 10.0,
-            yield_kg_ha: r0(yield_kg),
+            revenue_brl_ha: revenue.map(|r| (r / 10.0).round() * 10.0),
+            yield_kg_ha: yield_kg.map(r0),
             etc_mm: r0(etc),
             eff_rain_mm: r0(pe),
             deficit_mm: r0(deficit),
             soil_loss_t_ha: (loss_t * 100.0).round() / 100.0,
             loss_seasons: loss,
             analog_seasons: n,
-            harvest: cal.is_some(),
+            harvest: crop.harvest,
+            estimated: crop.estimated,
         });
         prev = Some(crop);
     }
     let n = years.len() as f64;
     let avg = |f: fn(&YearOutcome) -> f64| years.iter().map(f).sum::<f64>() / n;
+    let avg_opt = |f: fn(&YearOutcome) -> Option<f64>| -> Option<f64> {
+        let v: Option<Vec<f64>> = years.iter().map(f).collect();
+        v.map(|v| v.iter().sum::<f64>() / n)
+    };
     let summary = Summary {
-        return_idx: r0(avg(|y| y.return_idx)),
+        return_idx: avg_opt(|y| y.return_idx).map(r0),
         water_saving_idx: r0(avg(|y| y.water_balance_idx)),
         soil_idx: r0(avg(|y| y.soil_idx)),
         resilience_idx: r0(100.0 - avg(|y| y.risk_idx)),
-        revenue_brl_ha: (avg(|y| y.revenue_brl_ha) / 10.0).round() * 10.0,
+        revenue_brl_ha: avg_opt(|y| y.revenue_brl_ha).map(|r| (r / 10.0).round() * 10.0),
         soil_loss_t_ha: (avg(|y| y.soil_loss_t_ha) * 100.0).round() / 100.0,
         deficit_mm: r0(avg(|y| y.deficit_mm)),
     };
@@ -553,25 +561,37 @@ pub fn simulate(inp: SimInput) -> SimOutput {
     let et0 = et0_mm_day(inp.climate, inp.lat);
     let et0_season: f64 = [10usize, 11, 0, 1, 2].iter().map(|&m| et0[m] * DAYS_IN_MONTH[m]).sum();
 
-    let ctx = Ctx { et0, k, ls, soja: soja.as_ref(), milho: milho.as_ref(), revenue_ref };
+    let ctx = Ctx { rain: inp.rain, analogs: a, et0, k, ls, soja: soja.as_ref(), milho: milho.as_ref(), revenue_ref };
 
-    use CropId::*;
-    let make = |id, name, icon, tagline, seq: Vec<CropId>| {
+    let make = |id: &str, name: &str, icon: &str, tagline: &str, seq: Vec<CropSpec>| {
         let scenarios = ScenarioSet {
             seco: run(&seq, Scen::Seco, &a.profile_seco, &ctx),
             tipico: run(&seq, Scen::Tipico, &a.profile_tipico, &ctx),
             chuvoso: run(&seq, Scen::Chuvoso, &a.profile_chuvoso, &ctx),
         };
-        Strategy { id, name, icon, sequence: seq, tagline, scenarios }
+        Strategy {
+            id: id.into(),
+            name: name.into(),
+            icon: icon.into(),
+            sequence: seq.iter().map(|c| c.key.clone()).collect(),
+            tagline: tagline.into(),
+            estimated: seq.iter().any(|c| c.estimated),
+            scenarios,
+        }
     };
+    let b = |c: CropId| crops::spec(c);
+    use CropId::*;
 
-    let baseline = make("atual", "Rotação atual", "history", "Soja todos os anos.", vec![Soja, Soja, Soja]);
-    let strategies = vec![
-        make("retorno", "Maior retorno", "trending-up", "Mais receita, solo mais exposto.", vec![Soja, Milho, Milho]),
-        make("equilibrada", "Equilibrada", "scale", "Duas safras comerciais e uma de proteção do solo.", vec![Soja, Milho, Cobertura]),
-        make("resiliencia", "Maior resiliência", "shield-check", "Palhada antes do milho: menos erosão.", vec![Soja, Cobertura, Milho]),
-        make("sustentavel", "Mais sustentável", "sprout", "Prioriza a proteção do solo.", vec![Cobertura, Soja, Cobertura]),
+    let baseline = make("atual", "Rotação atual", "history", "A rotação que você informou, repetida.", inp.current);
+    let mut strategies = vec![
+        make("retorno", "Maior retorno", "trending-up", "Mais receita, solo mais exposto.", vec![b(Soja), b(Milho), b(Milho)]),
+        make("equilibrada", "Equilibrada", "scale", "Duas safras comerciais e uma de proteção do solo.", vec![b(Soja), b(Milho), b(Cobertura)]),
+        make("resiliencia", "Maior resiliência", "shield-check", "Palhada antes do milho: menos erosão.", vec![b(Soja), b(Cobertura), b(Milho)]),
+        make("sustentavel", "Mais sustentável", "sprout", "Prioriza a proteção do solo.", vec![b(Cobertura), b(Soja), b(Cobertura)]),
     ];
+    if let Some(mine) = inp.mine {
+        strategies.push(make("minha", "Minha rotação", "user-round", "A rotação que você montou.", mine));
+    }
 
     let calibration = Calibration {
         yield_source: inp.pam.source.clone(),
@@ -588,7 +608,7 @@ pub fn simulate(inp: SimInput) -> SimOutput {
         et0_season_mm: et0_season.round(),
         loss_threshold: LOSS_THRESHOLD,
     };
-    SimOutput { baseline, strategies, recommended: aligned_strategy(inp.objective), calibration }
+    SimOutput { baseline, strategies, recommended: aligned_strategy(inp.objective), calibration, custom_params: inp.customs }
 }
 
 #[cfg(test)]
@@ -689,17 +709,92 @@ mod tests {
         assert!(a.profile_tipico.driest_month_mm < a.profile_chuvoso.driest_month_mm);
     }
 
+    fn soy3() -> Vec<CropSpec> {
+        vec![crops::spec(CropId::Soja), crops::spec(CropId::Soja), crops::spec(CropId::Soja)]
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn input<'a>(
+        c: &'a Climate, a: &'a AnalogYears, s: &'a Soil, t: &'a Terrain, p: &'a Pam, r: &'a RainSeries,
+        current: Vec<CropSpec>, mine: Option<Vec<CropSpec>>, customs: Vec<CustomParams>,
+    ) -> SimInput<'a> {
+        SimInput { climate: c, analogs: a, soil: s, terrain: t, pam: p, rain: r, lat: -12.1, objective: Objective::Equilibrio, current, mine, customs }
+    }
+
+    fn terrain() -> Terrain {
+        Terrain { live: false, source: String::new(), elevation_m: 780.0, slope_pct: 2.0, samples: 5 }
+    }
+
+    fn cowpea(id: &str) -> crops::CustomCropReq {
+        crops::CustomCropReq {
+            id: id.into(), name: format!("Caupi {id}"), kind: crops::CropType::Legume, cycle_months: 3, planting_month: 11, water: None, straw: None,
+        }
+    }
+
+    #[test]
+    fn baseline_comes_from_the_declared_rotation() {
+        let (c, r, s, p, t) = (climate(), rain(), soil(), pam(), terrain());
+        let a = analog_years(&r);
+        let keys: Vec<String> = ["soja", "milho", "pousio"].iter().map(|k| k.to_string()).collect();
+        let res = crops::resolve(&keys, None, &[]).unwrap();
+        let out = simulate(input(&c, &a, &s, &t, &p, &r, res.current, None, vec![]));
+        assert_eq!(out.baseline.sequence, keys);
+        let y = &out.baseline.scenarios.tipico.years;
+        assert_eq!(y[2].crop, "pousio");
+        assert!(!y[2].harvest && y[2].etc_mm == 0.0);
+        // Bare fallow loses far more soil than a crop.
+        assert!(y[2].soil_loss_t_ha > 3.0 * y[0].soil_loss_t_ha);
+        assert!(out.strategies.iter().all(|x| x.id != "minha"));
+    }
+
+    #[test]
+    fn custom_crops_have_no_revenue_and_are_marked_estimated() {
+        let (c, r, s, p, t) = (climate(), rain(), soil(), pam(), terrain());
+        let a = analog_years(&r);
+        let mine: Vec<String> = ["custom-1", "milho", "custom-2"].iter().map(|k| k.to_string()).collect();
+        let res = crops::resolve(&["soja".into(), "soja".into(), "soja".into()], Some(&mine), &[cowpea("custom-1"), cowpea("custom-2")]).unwrap();
+        let out = simulate(input(&c, &a, &s, &t, &p, &r, res.current, res.mine, res.customs));
+        let m = out.strategies.iter().find(|x| x.id == "minha").unwrap();
+        assert!(m.estimated && !out.baseline.estimated);
+        for sc in [&m.scenarios.seco, &m.scenarios.tipico, &m.scenarios.chuvoso] {
+            assert!(sc.summary.revenue_brl_ha.is_none() && sc.summary.return_idx.is_none());
+            assert!(sc.years[0].estimated && sc.years[0].revenue_brl_ha.is_none() && sc.years[0].yield_kg_ha.is_none());
+            assert!(sc.years[1].revenue_brl_ha.is_some() && !sc.years[1].estimated);
+            // Same answers → same results (expected; the UI must not rank them).
+            assert_eq!(sc.years[0].etc_mm, sc.years[2].etc_mm);
+            assert_eq!(sc.years[0].analog_seasons, sc.years[2].analog_seasons);
+        }
+        assert_eq!(out.custom_params.len(), 2);
+    }
+
+    #[test]
+    fn ky_risk_is_higher_in_dry_seasons() {
+        // Cowpea sown in January: its cycle covers February, the month that drives the scenarios.
+        let (c, r, s, p, t) = (climate(), rain(), soil(), pam(), terrain());
+        let a = analog_years(&r);
+        let mut req = cowpea("custom-1");
+        req.planting_month = 1;
+        req.water = Some(crops::Water::Muita);
+        let res = crops::resolve(&["custom-1".into(), "soja".into(), "soja".into()], None, &[req]).unwrap();
+        let out = simulate(input(&c, &a, &s, &t, &p, &r, res.current, None, res.customs));
+        let dry = &out.baseline.scenarios.seco.years[0];
+        let wet = &out.baseline.scenarios.chuvoso.years[0];
+        assert!(dry.analog_seasons > 0);
+        assert!(dry.risk_idx >= wet.risk_idx, "dry {} wet {}", dry.risk_idx, wet.risk_idx);
+        assert!(dry.deficit_mm >= wet.deficit_mm);
+    }
+
     #[test]
     fn dry_seasons_reduce_revenue_and_raise_risk() {
         let (c, r, s, p) = (climate(), rain(), soil(), pam());
         let a = analog_years(&r);
-        let t = Terrain { live: false, source: String::new(), elevation_m: 780.0, slope_pct: 2.0, samples: 5 };
-        let out = simulate(SimInput { climate: &c, analogs: &a, soil: &s, terrain: &t, pam: &p, lat: -12.1, objective: Objective::Equilibrio });
+        let t = terrain();
+        let out = simulate(input(&c, &a, &s, &t, &p, &r, soy3(), None, vec![]));
         let soja = out.calibration.crops.iter().find(|c| c.crop == CropId::Soja).unwrap();
         assert!(soja.seco.ratio < soja.chuvoso.ratio, "{soja:?}");
         assert!((soja.price_brl_kg - 2.0).abs() < 0.01);
         let base = &out.baseline.scenarios;
-        assert!(base.seco.summary.revenue_brl_ha < base.chuvoso.summary.revenue_brl_ha);
+        assert!(base.seco.summary.revenue_brl_ha.unwrap() < base.chuvoso.summary.revenue_brl_ha.unwrap());
         assert!(base.seco.summary.resilience_idx < base.chuvoso.summary.resilience_idx);
         // Cover crops protect the soil and need less water.
         let sus = out.strategies.iter().find(|x| x.id == "sustentavel").unwrap();

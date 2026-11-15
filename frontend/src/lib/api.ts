@@ -1,4 +1,5 @@
 import { currentLang } from './i18n'
+import type { CropType, CustomCrop, Straw, Water } from './crops'
 
 export type LatLng = [number, number]
 
@@ -58,40 +59,56 @@ export interface Soil {
   textureClass: string
 }
 
+/** "full" = Brazil (yields, scenarios, simulation); "diagnosis_only" = outside Brazil. */
+export type Coverage = 'full' | 'diagnosis_only'
+
+export interface ForeignPlace {
+  name: string | null
+  region: string | null
+  /** Lower-case ISO 3166-1 alpha-2, e.g. "us". */
+  countryCode: string
+}
+
 export interface Diagnosis {
+  /** Missing in sessions saved before coverage existed; those were all "full". */
+  coverage?: Coverage
   centroid: { lat: number; lng: number }
   areaHa: number
   climate: Climate
-  rainSeries: { live: boolean; source: string; years: { year: number; totalMm: number }[] }
-  analogYears: AnalogYears
+  rainSeries: { live: boolean; source: string; years: { year: number; totalMm: number }[] } | null
+  analogYears: AnalogYears | null
   soil: Soil
   terrain: { live: boolean; source: string; elevationM: number; slopePct: number; samples: number }
-  place: { live: boolean; municipality: string; uf: string; ibgeCode: string | null }
-  yieldSource: string
-  yieldLevel: string
-  yieldPlace: string
-  yieldsLive: boolean
+  place: { live: boolean; municipality: string; uf: string; ibgeCode: string | null } | null
+  foreignPlace?: ForeignPlace | null
+  yieldSource: string | null
+  yieldLevel: string | null
+  yieldPlace: string | null
+  yieldsLive: boolean | null
   crops: { crop: 'soja' | 'milho'; years: PamYear[] }[]
   sources: SourceInfo[]
 }
 
-export type CropId = 'soja' | 'milho' | 'cobertura'
+export const isDiagnosisOnly = (d?: Diagnosis) => d?.coverage === 'diagnosis_only'
+
+/** Built-in crop id ("soja", "milho", "cobertura", "pousio") or a farmer-defined id ("custom-1"). */
+export type CropKey = string
 export type ScenarioId = 'seco' | 'tipico' | 'chuvoso'
 export type Objective = 'lucro' | 'solo' | 'seguranca' | 'equilibrio'
-export type RecentCrop = 'soja' | 'milho' | 'outra' | 'naosei'
 
 export interface YearOutcome {
   year: number
-  crop: CropId
+  crop: CropKey
   cropName: string
   seasonRainMm: number
-  returnIdx: number
+  /** null = not available (crops described by the farmer have no price or yield). */
+  returnIdx: number | null
   waterDemandIdx: number
   waterBalanceIdx: number
   soilIdx: number
   riskIdx: number
-  revenueBrlHa: number
-  yieldKgHa: number
+  revenueBrlHa: number | null
+  yieldKgHa: number | null
   etcMm: number
   effRainMm: number
   deficitMm: number
@@ -99,14 +116,15 @@ export interface YearOutcome {
   lossSeasons: number
   analogSeasons: number
   harvest: boolean
+  estimated: boolean
 }
 
 export interface Summary {
-  returnIdx: number
+  returnIdx: number | null
   waterSavingIdx: number
   soilIdx: number
   resilienceIdx: number
-  revenueBrlHa: number
+  revenueBrlHa: number | null
   soilLossTHa: number
   deficitMm: number
 }
@@ -118,7 +136,7 @@ export interface ScenarioYield {
 }
 
 export interface CropCalibration {
-  crop: CropId
+  crop: CropKey
   firstYear: number
   lastYear: number
   years: number
@@ -150,8 +168,9 @@ export interface Strategy {
   id: string
   name: string
   icon: string
-  sequence: CropId[]
+  sequence: CropKey[]
   tagline: string
+  estimated: boolean
   scenarios: Record<ScenarioId, ScenarioResult>
 }
 
@@ -160,10 +179,33 @@ export interface Simulation {
   strategies: Strategy[]
   recommended: string
   calibration: Calibration
+  customParams: CustomParams[]
   analogYears: AnalogYears
   demo: boolean
   assumptions: string[]
   sources: SourceInfo[]
+}
+
+export interface CustomParams {
+  key: string
+  name: string
+  type: CropType
+  cycleDays: number
+  plantingMonth: number
+  water: Water
+  straw: Straw
+  kcMid: number
+  ky: number | null
+  cFactor: number
+  source: string
+}
+
+export interface SimulateReq {
+  polygon: LatLng[]
+  objective: Objective
+  currentRotation: CropKey[]
+  myRotation?: CropKey[]
+  customCrops: CustomCrop[]
 }
 
 async function call<T>(path: string, body?: unknown): Promise<T> {
@@ -176,20 +218,31 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
     // The API answers in Portuguese; in English we show a generic message.
     const pt = currentLang() === 'pt'
     let msg = pt ? 'Não conseguimos falar com o servidor.' : 'We could not reach the server.'
+    let code: string | undefined
     try {
       const j = await res.json()
       if (j?.error && pt) msg = j.error
+      if (typeof j?.code === 'string') code = j.code
     } catch {
       /* ignore */
     }
-    throw new Error(msg)
+    throw new ApiError(msg, code)
   }
   return res.json() as Promise<T>
+}
+
+/** An API error; `code` is the server's stable machine code (e.g. "outside_coverage"), when given. */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly code?: string,
+  ) {
+    super(message)
+  }
 }
 
 export const api = {
   demoFarm: () => call<Farm>('/demo-farm'),
   diagnosis: (polygon: LatLng[]) => call<Diagnosis>('/diagnosis', { polygon }),
-  simulate: (polygon: LatLng[], objective: Objective, recentCrop: RecentCrop) =>
-    call<Simulation>('/simulate', { polygon, objective, recentCrop }),
+  simulate: (req: SimulateReq) => call<Simulation>('/simulate', req),
 }

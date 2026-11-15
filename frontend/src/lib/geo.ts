@@ -32,3 +32,13 @@ export async function searchPlace(q: string, lang: 'pt' | 'en' = 'pt'): Promise<
   const rows: { display_name: string; lat: string; lon: string }[] = await res.json()
   return rows.map((r) => ({ name: r.display_name, lat: +r.lat, lng: +r.lon }))
 }
+
+/** Country name in the interface language, from an ISO 3166-1 alpha-2 code ("us" → "United States"). */
+export function countryName(code: string, lang: 'pt' | 'en'): string {
+  const upper = code.toUpperCase()
+  try {
+    return new Intl.DisplayNames([lang === 'pt' ? 'pt-BR' : 'en'], { type: 'region' }).of(upper) ?? upper
+  } catch {
+    return upper
+  }
+}
