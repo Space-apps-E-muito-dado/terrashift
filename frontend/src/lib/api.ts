@@ -59,22 +59,37 @@ export interface Soil {
   textureClass: string
 }
 
+/** "full" = Brazil (yields, scenarios, simulation); "diagnosis_only" = outside Brazil. */
+export type Coverage = 'full' | 'diagnosis_only'
+
+export interface ForeignPlace {
+  name: string | null
+  region: string | null
+  /** Lower-case ISO 3166-1 alpha-2, e.g. "us". */
+  countryCode: string
+}
+
 export interface Diagnosis {
+  /** Missing in sessions saved before coverage existed; those were all "full". */
+  coverage?: Coverage
   centroid: { lat: number; lng: number }
   areaHa: number
   climate: Climate
-  rainSeries: { live: boolean; source: string; years: { year: number; totalMm: number }[] }
-  analogYears: AnalogYears
+  rainSeries: { live: boolean; source: string; years: { year: number; totalMm: number }[] } | null
+  analogYears: AnalogYears | null
   soil: Soil
   terrain: { live: boolean; source: string; elevationM: number; slopePct: number; samples: number }
-  place: { live: boolean; municipality: string; uf: string; ibgeCode: string | null }
-  yieldSource: string
-  yieldLevel: string
-  yieldPlace: string
-  yieldsLive: boolean
+  place: { live: boolean; municipality: string; uf: string; ibgeCode: string | null } | null
+  foreignPlace?: ForeignPlace | null
+  yieldSource: string | null
+  yieldLevel: string | null
+  yieldPlace: string | null
+  yieldsLive: boolean | null
   crops: { crop: 'soja' | 'milho'; years: PamYear[] }[]
   sources: SourceInfo[]
 }
+
+export const isDiagnosisOnly = (d?: Diagnosis) => d?.coverage === 'diagnosis_only'
 
 /** Built-in crop id ("soja", "milho", "cobertura", "pousio") or a farmer-defined id ("custom-1"). */
 export type CropKey = string
